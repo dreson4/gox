@@ -6,7 +6,7 @@
 
 ---
 
-```gox
+```go
 package main
 
 import "gox"
@@ -58,7 +58,7 @@ No interpreter. No virtual DOM. No bridge serialization. Go calls platform APIs 
 
 Here's a screen that fetches data from an API, shows a loading state, and handles errors — the kind of thing every app needs:
 
-```gox
+```go
 package main
 
 import (
@@ -149,7 +149,7 @@ You're not learning a new language. You're writing Go.
 
 Every mobile framework invents its own async model. GOX doesn't — it uses Go's.
 
-```gox
+```go
 // Fetch three APIs concurrently — takes as long as the slowest one
 func loadDashboard(ctx context.Context) {
     gox.SetState(func() { loading = true })
@@ -207,7 +207,7 @@ gox.Navigate(settingsScreen, gox.NavigateOptions{
 
 GOX recognizes special function names as lifecycle hooks — just like Go's `init()`. The compiler detects them and wires them up automatically:
 
-```gox
+```go
 func onMount(ctx context.Context) {
     // Runs once when the screen first renders
     go fetchData(ctx)
