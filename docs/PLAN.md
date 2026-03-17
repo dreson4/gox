@@ -330,7 +330,7 @@ This touches every layer minimally:
   - [x] Rewrite bridge.m: flat frame-based rendering (no UIStackView)
   - [x] SafeArea as user-controlled component
   - [x] Verified from external project (hellogox): flex rows, images, colored boxes
-  - [ ] ScrollView: Yoga content size + native scrolling
+  - [x] ScrollView: Yoga content size + native scrolling, props, scroll events
 - [x] **Diff-Based Re-Render**
   - [x] GoxRenderContext: per-VC state for views, frames, event handlers
   - [x] updateUI(): hash-based diff — skip unchanged frames (FNV-1a)

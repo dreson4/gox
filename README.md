@@ -1,68 +1,330 @@
-# GOX
+<p align="center">
+  <h1 align="center">GOX</h1>
+  <p align="center"><strong>Build native iOS apps with Go.</strong></p>
+  <p align="center">Go + JSX-like views. No VM. No bridge. No JavaScript. Just a compiled binary.</p>
+</p>
 
-A native mobile UI framework for Go. Write Go + JSX-like views, compile to native iOS and Android apps. No runtime, no VM, no bridge.
+---
 
 ```gox
-package app
+package main
 
 import "gox"
 
 view {
-    <gox.View>
-        <gox.Text>Hello World</gox.Text>
+    <gox.View style={gox.Style{Flex: 1, Padding: 24}}>
+        <gox.Text style={gox.Style{FontSize: 32, FontWeight: "bold"}}>
+            Hello from Go
+        </gox.Text>
     </gox.View>
 }
 ```
 
-## How It Works
-
-GOX adds one concept to Go: the `view` block — JSX-like syntax for declaring UI. Everything else is standard Go.
-
-```
-.gox file → GOX Compiler → .go file → go build → native binary
+```bash
+gox run ios
 ```
 
-- `.gox` files are Go with a `view { }` block containing JSX-like elements
-- The compiler transpiles `.gox` → pure `.go` that calls the GOX runtime
-- `go build` compiles to a native binary — no interpreter, no virtual DOM
+That's it. A native iOS app, written in Go, running on your device.
+
+---
+
+## Why Go for mobile?
+
+Go already compiles to iOS and Android. It has goroutines for concurrency, a fast compiler, a great standard library, and produces small static binaries. The only thing missing was a way to build UI.
+
+GOX adds **one thing** to Go: a `view { }` block with JSX-like syntax for declaring native views. Everything else — structs, functions, imports, goroutines, generics, tests — is standard Go.
+
+```
+.gox file → GOX compiler → .go file → go build → native binary
+```
+
+No interpreter. No virtual DOM. No bridge serialization. Go calls UIKit directly.
+
+### How GOX compares
+
+| | Language | Runtime overhead | Native views? | Concurrency |
+|---|---|---|---|---|
+| React Native | JavaScript | Hermes VM + JSON bridge | No — bridge calls | async/await, Promises |
+| Flutter | Dart | Skia rendering engine | No — custom renderer | async/await, Futures |
+| SwiftUI | Swift | None | Yes | async/await |
+| **GOX** | **Go** | **None** | **Yes** | **Goroutines** |
+
+---
+
+## A real example
+
+Here's a screen that fetches data from an API, shows a loading state, and handles errors — the kind of thing every app needs:
+
+```gox
+package main
+
+import (
+    "gox"
+    "net/http"
+    "encoding/json"
+    "context"
+    "fmt"
+)
+
+var posts []Post
+var loading bool
+var err error
+
+type Post struct {
+    ID    int    `json:"id"`
+    Title string `json:"title"`
+}
+
+func fetchPosts(ctx context.Context) {
+    gox.SetState(func() { loading = true })
+
+    req, _ := http.NewRequestWithContext(ctx, "GET",
+        "https://jsonplaceholder.typicode.com/posts", nil)
+    resp, e := http.DefaultClient.Do(req)
+    if e != nil {
+        gox.SetState(func() { err = e; loading = false })
+        return
+    }
+    defer resp.Body.Close()
+
+    var data []Post
+    json.NewDecoder(resp.Body).Decode(&data)
+    gox.SetState(func() { posts = data; loading = false })
+}
+
+view {
+    <gox.SafeArea>
+        <gox.View style={styles["container"]}>
+            <gox.Text style={styles["title"]}>Posts</gox.Text>
+
+            {if loading {
+                <gox.Text style={styles["meta"]}>Loading...</gox.Text>
+            }}
+
+            {if err != nil {
+                <gox.Text style={styles["error"]}>{fmt.Sprintf("Error: %v", err)}</gox.Text>
+            }}
+
+            <gox.ScrollView style={gox.Style{Flex: 1}}>
+                {for _, p := range posts {
+                    <gox.View style={styles["card"]}>
+                        <gox.Text style={styles["postTitle"]}>{p.Title}</gox.Text>
+                    </gox.View>
+                }}
+            </gox.ScrollView>
+        </gox.View>
+    </gox.SafeArea>
+}
+
+var styles = gox.Styles{
+    "container":  gox.Style{Flex: 1, Padding: 24, Gap: 16, BackgroundColor: "#F5F5F5"},
+    "title":      gox.Style{FontSize: 32, FontWeight: "bold", Color: "#111"},
+    "meta":       gox.Style{FontSize: 16, Color: "#666"},
+    "error":      gox.Style{FontSize: 16, Color: "#D32F2F"},
+    "card":       gox.Style{Padding: 16, BackgroundColor: "#FFF", BorderRadius: 12},
+    "postTitle":  gox.Style{FontSize: 18, FontWeight: "600", Color: "#222"},
+}
+```
+
+Notice what's happening:
+
+- **`net/http`** — the Go standard library, not a framework HTTP client
+- **`go fetchPosts(ctx)`** — a goroutine, not a Promise or Future
+- **`context.Context`** — cancel in-flight requests when the user navigates away
+- **`encoding/json`** — standard Go JSON decoding
+- **`gox.SetState`** — safe from any goroutine, triggers UI update on main thread
+
+You're not learning a new language. You're writing Go.
+
+---
+
+## Goroutines are the killer feature
+
+Every mobile framework invents its own async model. GOX doesn't — it uses Go's.
+
+```gox
+// Fetch three APIs concurrently — takes as long as the slowest one
+func loadDashboard(ctx context.Context) {
+    gox.SetState(func() { loading = true })
+
+    var wg sync.WaitGroup
+    wg.Add(3)
+
+    go func() {
+        defer wg.Done()
+        user, _ = fetchUser(ctx)
+    }()
+
+    go func() {
+        defer wg.Done()
+        posts, _ = fetchPosts(ctx)
+    }()
+
+    go func() {
+        defer wg.Done()
+        notifications, _ = fetchNotifications(ctx)
+    }()
+
+    wg.Wait()
+    gox.SetState(func() { loading = false })
+}
+```
+
+No `Promise.all()`. No `async let`. No `Dispatchers.IO`. Just goroutines and a WaitGroup — things every Go developer already knows.
+
+---
+
+## Navigation
+
+```go
+// Push a screen
+gox.Navigate(profileScreen, gox.Nav("Profile"))
+
+// Go back
+gox.GoBack()
+
+// Full control over the nav bar
+gox.Navigate(settingsScreen, gox.NavigateOptions{
+    Title:       "Settings",
+    LargeTitle:  gox.Bool(true),
+    HeaderStyle: &gox.HeaderStyle{BackgroundColor: "#1a1a2e"},
+    RightButtons: []gox.BarButton{
+        {SystemItem: "done", OnPress: func() { save() }},
+    },
+})
+```
+
+---
+
+## Lifecycle
+
+Every screen gets a context that's cancelled when the screen is popped — goroutines clean up automatically:
+
+```go
+ctx := gox.UseLifecycle(gox.ScreenCallbacks{
+    OnMount: func(ctx context.Context) {
+        go fetchPosts(ctx)  // cancelled automatically if user navigates away
+    },
+    OnAppear: func(ctx context.Context) {
+        go refreshData(ctx) // re-fetch when returning to this screen
+    },
+})
+```
+
+---
+
+## CLI
+
+```bash
+# Create a new project
+gox init myapp
+
+# Run on iOS simulator
+gox run ios
+
+# Run on a specific device
+gox run ios --device "iPhone 16 Pro"
+
+# Stream Go logs to terminal
+gox run ios --logs
+
+# Production build
+gox build ios
+
+# Deploy to TestFlight
+gox deploy testflight
+
+# Ship to the App Store
+gox deploy appstore
+```
+
+The native Xcode project is auto-generated. You never touch it.
+
+---
+
+## Components
+
+GOX maps directly to native UIKit views:
+
+| GOX | UIKit | Notes |
+|---|---|---|
+| `View` | `UIView` | Flexbox container (powered by Yoga) |
+| `Text` | `UILabel` | Styled text |
+| `Button` | `UIButton` | Tap handler via `onPress` |
+| `TextInput` | `UITextField` | `onChange`, `onSubmit`, `onFocus`, `onBlur` |
+| `Image` | `UIImageView` | URL loading + caching (SDWebImage) |
+| `ScrollView` | `UIScrollView` | Yoga-computed content size |
+| `Switch` | `UISwitch` | Toggle with `onValueChange` |
+| `SafeArea` | Safe area insets | Automatic padding for notch/home indicator |
+
+Layout is powered by [Yoga](https://yogalayout.dev/) (the same flexbox engine used by React Native).
+
+---
+
+## How it works under the hood
+
+```
+┌─────────────────────────────────────────────┐
+│              Your .gox code                  │
+├─────────────────────────────────────────────┤
+│           GOX Compiler (.gox → .go)          │
+├─────────────────────────────────────────────┤
+│         Go runtime + GOX framework           │
+│   render tree → Yoga layout → frame list     │
+├─────────────────────────────────────────────┤
+│         cgo bridge (Go ↔ Objective-C)        │
+├─────────────────────────────────────────────┤
+│        UIKit (native iOS views)              │
+└─────────────────────────────────────────────┘
+```
+
+1. The GOX compiler turns `.gox` files into pure `.go` files
+2. Your Go code builds a lightweight render tree (`gox.E`, `gox.T`)
+3. Yoga computes flexbox layout into flat frames
+4. The cgo bridge applies frames to native UIKit views
+5. A hash-based diff engine skips unchanged views on re-render
+
+---
 
 ## Status
 
-**Early development.** The compiler pipeline (lexer → parser → codegen) is working. Runtime and platform bridge are next.
+**GOX is experimental.** It works — we're building apps with it — but APIs will change.
 
-## Usage
+What's working today:
+- GOX compiler (lexer, parser, codegen) — 18 tests
+- All core components (View, Text, Button, TextInput, Image, ScrollView, Switch)
+- Yoga flexbox layout
+- Navigation with full nav bar control
+- Screen lifecycle (mount, unmount, appear, disappear)
+- State management with goroutine-safe `SetState`
+- Diff-based re-rendering with frame hashing
+- Image caching (SDWebImage)
+- `gox run ios` with device picker
+- slog logging to terminal via `--logs`
+
+What's coming:
+- Android support
+- FlatList (virtualized lists)
+- Animations
+- `gox init` scaffolding
+- `gox deploy` for TestFlight/App Store
+- Hot reload
+- More components (Modal, Slider, TabBar)
+
+---
+
+## Get involved
+
+GOX is open source. If you've ever wished you could build mobile apps in Go, we'd love your help.
 
 ```bash
-# Compile a .gox file to .go
-gox compile app.gox
-
-# Compile all .gox files in a directory
-gox compile ./screens/home/
+git clone https://github.com/nicbarker/gox
+cd gox
+go test ./...
 ```
 
-## Project Structure
+See [docs/PLAN.md](docs/PLAN.md) for the full roadmap and [docs/gox-complete-spec.md](docs/gox-complete-spec.md) for the language spec.
 
-```
-gox/
-├── cmd/gox/                  # CLI tool
-├── internal/compiler/
-│   ├── token/                # Token types
-│   ├── lexer/                # Multi-mode tokenizer
-│   ├── ast/                  # Abstract syntax tree
-│   ├── parser/               # Recursive descent parser
-│   └── codegen/              # Go code generator
-├── docs/
-│   ├── gox-complete-spec.md  # Language specification
-│   └── PLAN.md               # Implementation roadmap
-└── testdata/                 # Sample .gox files
-```
+---
 
-## Design Principles
-
-- **One new thing** — `view` block is the only non-Go syntax
-- **Explicit imports** — `gox.View`, `gox.Text`, no magic globals
-- **One way to do everything** — styles are props, events are funcs, state is a struct
-- **Go ecosystem works** — `go test`, `go vet`, profiling, all of it
-- **Never touch native folders** — iOS/Android projects are auto-generated
-
-See [docs/gox-complete-spec.md](docs/gox-complete-spec.md) for the full language specification.
+<p align="center"><em>Write Go. Ship native.</em></p>
