@@ -147,10 +147,10 @@ static UIView* buildViewTree(NSDictionary *node) {
     }
 
     // Element (type 0)
-    BOOL isText = [tag isEqualToString:@"Text"];
+    NSDictionary *style = props[@"style"];
 
-    if (isText) {
-        // Collect text content from children
+    // --- Text ---
+    if ([tag isEqualToString:@"Text"]) {
         NSMutableString *text = [NSMutableString string];
         for (NSDictionary *child in children) {
             NSNumber *childType = child[@"type"];
@@ -160,21 +160,250 @@ static UIView* buildViewTree(NSDictionary *node) {
             }
         }
 
-        NSLog(@"GOX: Creating label with text: %@", text);
-
         UILabel *label = [[UILabel alloc] init];
         label.translatesAutoresizingMaskIntoConstraints = NO;
         label.text = text;
         label.numberOfLines = 0;
-
-        NSDictionary *style = props[@"style"];
         applyStyle(label, style, YES);
-
         return label;
     }
 
-    // Generic view container — use UIStackView for automatic vertical layout
-    NSDictionary *style = props[@"style"];
+    // --- Button ---
+    if ([tag isEqualToString:@"Button"]) {
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.translatesAutoresizingMaskIntoConstraints = NO;
+
+        // Collect button label from children (Text element)
+        for (NSDictionary *child in children) {
+            NSNumber *childType = child[@"type"];
+            int ct = [childType intValue];
+            if (ct == 0) {
+                NSString *childTag = child[@"tag"];
+                if ([childTag isEqualToString:@"Text"]) {
+                    NSArray *grandChildren = child[@"children"];
+                    NSMutableString *label = [NSMutableString string];
+                    for (NSDictionary *gc in grandChildren) {
+                        if ([gc[@"type"] intValue] == 1) {
+                            NSString *t = gc[@"text"];
+                            if (t) [label appendString:t];
+                        }
+                    }
+                    [button setTitle:label forState:UIControlStateNormal];
+
+                    // Apply text style from the child Text element
+                    NSDictionary *childProps = child[@"props"];
+                    NSDictionary *childStyle = childProps[@"style"];
+                    if (childStyle) {
+                        NSNumber *fontSize = childStyle[@"FontSize"];
+                        if (fontSize && [fontSize doubleValue] > 0) {
+                            button.titleLabel.font = [UIFont systemFontOfSize:[fontSize doubleValue]];
+                        }
+                        NSString *color = childStyle[@"Color"];
+                        if (color && [color length] > 0) {
+                            [button setTitleColor:parseColor(color) forState:UIControlStateNormal];
+                        }
+                        NSString *fontWeight = childStyle[@"FontWeight"];
+                        if (fontWeight && [fontWeight length] > 0) {
+                            CGFloat size = button.titleLabel.font.pointSize;
+                            UIFontWeight weight = UIFontWeightRegular;
+                            if ([fontWeight isEqualToString:@"bold"] || [fontWeight isEqualToString:@"700"]) {
+                                weight = UIFontWeightBold;
+                            } else if ([fontWeight isEqualToString:@"600"]) {
+                                weight = UIFontWeightSemibold;
+                            }
+                            button.titleLabel.font = [UIFont systemFontOfSize:size weight:weight];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply background color and border radius
+        applyStyle(button, style, NO);
+
+        // Apply padding as content insets
+        CGFloat btnPadding = 0;
+        if (style) {
+            NSNumber *p = style[@"Padding"];
+            if (p) btnPadding = [p doubleValue];
+        }
+        if (btnPadding > 0) {
+            UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+            config.contentInsets = NSDirectionalEdgeInsetsMake(btnPadding, btnPadding * 1.5, btnPadding, btnPadding * 1.5);
+            button.configuration = config;
+            // Re-apply background since configuration overrides it
+            button.configuration.background.backgroundColor = button.backgroundColor;
+
+            // Re-apply corner radius
+            NSNumber *radius = style[@"BorderRadius"];
+            if (radius && [radius doubleValue] > 0) {
+                button.configuration.background.cornerRadius = [radius doubleValue];
+            }
+        }
+
+        NSNumber *disabled = props[@"disabled"];
+        if (disabled && [disabled boolValue]) {
+            button.enabled = NO;
+            button.alpha = 0.5;
+        }
+
+        return button;
+    }
+
+    // --- Image ---
+    if ([tag isEqualToString:@"Image"]) {
+        UIImageView *imageView = [[UIImageView alloc] init];
+        imageView.translatesAutoresizingMaskIntoConstraints = NO;
+        imageView.contentMode = UIViewContentModeScaleAspectFit;
+
+        NSString *contentMode = props[@"contentMode"];
+        if ([contentMode isEqualToString:@"cover"]) {
+            imageView.contentMode = UIViewContentModeScaleAspectFill;
+            imageView.clipsToBounds = YES;
+        } else if ([contentMode isEqualToString:@"stretch"]) {
+            imageView.contentMode = UIViewContentModeScaleToFill;
+        } else if ([contentMode isEqualToString:@"center"]) {
+            imageView.contentMode = UIViewContentModeCenter;
+        }
+
+        // Load image from URL
+        NSString *src = props[@"src"];
+        if (src && [src length] > 0) {
+            if ([src hasPrefix:@"http://"] || [src hasPrefix:@"https://"]) {
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                    NSURL *url = [NSURL URLWithString:src];
+                    NSData *data = [NSData dataWithContentsOfURL:url];
+                    if (data) {
+                        UIImage *image = [UIImage imageWithData:data];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            imageView.image = image;
+                        });
+                    }
+                });
+            } else {
+                // Local asset name
+                imageView.image = [UIImage imageNamed:src];
+            }
+        }
+
+        applyStyle(imageView, style, NO);
+
+        // Apply explicit size from style
+        NSNumber *w = style[@"Width"];
+        NSNumber *h = style[@"Height"];
+        if (w && [w doubleValue] > 0) {
+            [imageView.widthAnchor constraintEqualToConstant:[w doubleValue]].active = YES;
+        }
+        if (h && [h doubleValue] > 0) {
+            [imageView.heightAnchor constraintEqualToConstant:[h doubleValue]].active = YES;
+        }
+
+        return imageView;
+    }
+
+    // --- ScrollView ---
+    if ([tag isEqualToString:@"ScrollView"]) {
+        UIScrollView *scrollView = [[UIScrollView alloc] init];
+        scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+
+        // Background color goes on scroll view
+        NSString *bgColor = style[@"BackgroundColor"];
+        if (bgColor && [bgColor length] > 0) {
+            scrollView.backgroundColor = parseColor(bgColor);
+        }
+
+        // Padding goes on content stack, not scroll view
+        CGFloat padding = 0;
+        if (style) {
+            NSNumber *p = style[@"Padding"];
+            if (p) padding = [p doubleValue];
+        }
+
+        UIStackView *content = [[UIStackView alloc] init];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        content.axis = UILayoutConstraintAxisVertical;
+        content.spacing = 12;
+        content.alignment = UIStackViewAlignmentFill;
+        content.layoutMarginsRelativeArrangement = YES;
+        content.layoutMargins = UIEdgeInsetsMake(padding, padding, padding, padding);
+        [scrollView addSubview:content];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [content.topAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.topAnchor],
+            [content.leadingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.leadingAnchor],
+            [content.trailingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.trailingAnchor],
+            [content.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
+            [content.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor],
+        ]];
+
+        for (NSDictionary *child in children) {
+            UIView *childView = buildViewTree(child);
+            if (childView) {
+                [content addArrangedSubview:childView];
+            }
+        }
+
+        return scrollView;
+    }
+
+    // --- TextInput ---
+    if ([tag isEqualToString:@"TextInput"]) {
+        UITextField *field = [[UITextField alloc] init];
+        field.translatesAutoresizingMaskIntoConstraints = NO;
+        field.borderStyle = UITextBorderStyleRoundedRect;
+
+        NSString *placeholder = props[@"placeholder"];
+        if (placeholder) {
+            field.placeholder = placeholder;
+        }
+
+        NSString *value = props[@"value"];
+        if (value) {
+            field.text = value;
+        }
+
+        NSNumber *secure = props[@"secure"];
+        if (secure && [secure boolValue]) {
+            field.secureTextEntry = YES;
+        }
+
+        NSString *kbType = props[@"keyboardType"];
+        if ([kbType isEqualToString:@"email"]) {
+            field.keyboardType = UIKeyboardTypeEmailAddress;
+        } else if ([kbType isEqualToString:@"numeric"]) {
+            field.keyboardType = UIKeyboardTypeNumberPad;
+        } else if ([kbType isEqualToString:@"phone"]) {
+            field.keyboardType = UIKeyboardTypePhonePad;
+        } else if ([kbType isEqualToString:@"url"]) {
+            field.keyboardType = UIKeyboardTypeURL;
+        }
+
+        applyStyle(field, style, YES);
+
+        [field.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+
+        return field;
+    }
+
+    // --- Switch ---
+    if ([tag isEqualToString:@"Switch"]) {
+        UISwitch *sw = [[UISwitch alloc] init];
+        sw.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSNumber *value = props[@"value"];
+        if (value) {
+            sw.on = [value boolValue];
+        }
+
+        NSNumber *disabled = props[@"disabled"];
+        if (disabled && [disabled boolValue]) {
+            sw.enabled = NO;
+        }
+
+        return sw;
+    }
+
+    // --- Generic container (View, Screen, Row, Column, SafeArea, etc.) ---
     CGFloat padding = 0;
     if (style) {
         NSNumber *p = style[@"Padding"];
@@ -183,22 +412,48 @@ static UIView* buildViewTree(NSDictionary *node) {
 
     UIStackView *stack = [[UIStackView alloc] init];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
-    stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 8;
-    stack.alignment = UIStackViewAlignmentLeading;
     stack.layoutMarginsRelativeArrangement = YES;
     stack.layoutMargins = UIEdgeInsetsMake(padding, padding, padding, padding);
 
-    applyStyle(stack, style, NO);
+    // Row → horizontal, everything else → vertical
+    if ([tag isEqualToString:@"Row"]) {
+        stack.axis = UILayoutConstraintAxisHorizontal;
+        stack.alignment = UIStackViewAlignmentCenter;
+    } else {
+        stack.axis = UILayoutConstraintAxisVertical;
+        stack.alignment = UIStackViewAlignmentLeading;
+    }
 
-    for (NSDictionary *child in children) {
-        UIView *childView = buildViewTree(child);
-        if (childView) {
-            [stack addArrangedSubview:childView];
+    // Flex layout from style
+    if (style) {
+        NSString *flexDir = style[@"FlexDirection"];
+        if ([flexDir isEqualToString:@"row"]) {
+            stack.axis = UILayoutConstraintAxisHorizontal;
+            stack.alignment = UIStackViewAlignmentCenter;
+        }
+
+        NSString *alignItems = style[@"AlignItems"];
+        if ([alignItems isEqualToString:@"center"]) {
+            stack.alignment = UIStackViewAlignmentCenter;
+        } else if ([alignItems isEqualToString:@"stretch"]) {
+            stack.alignment = UIStackViewAlignmentFill;
+        }
+
+        NSString *justify = style[@"JustifyContent"];
+        if ([justify isEqualToString:@"center"]) {
+            stack.distribution = UIStackViewDistributionEqualCentering;
+        } else if ([justify isEqualToString:@"between"]) {
+            stack.distribution = UIStackViewDistributionEqualSpacing;
+        }
+
+        NSNumber *gap = style[@"Gap"];
+        if (gap && [gap doubleValue] > 0) {
+            stack.spacing = [gap doubleValue];
         }
     }
 
-    NSLog(@"GOX: Created container with %lu children", (unsigned long)[children count]);
+    applyStyle(stack, style, NO);
 
     return stack;
 }
@@ -241,6 +496,7 @@ static UIView* buildViewTree(NSDictionary *node) {
 
                 [NSLayoutConstraint activateConstraints:@[
                     [rootView.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor],
+                    [rootView.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor],
                     [rootView.leadingAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.leadingAnchor],
                     [rootView.trailingAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.trailingAnchor],
                 ]];

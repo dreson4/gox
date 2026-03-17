@@ -9,19 +9,62 @@ var styles = gox.Styles{
         BackgroundColor: "#F0F4FF",
     },
     "title": gox.Style{
-        FontSize: 32,
+        FontSize: 28,
         FontWeight: "bold",
         Color: "#1a1a2e",
     },
     "subtitle": gox.Style{
-        FontSize: 18,
+        FontSize: 16,
         Color: "#666",
+    },
+    "input": gox.Style{
+        Padding: 12,
+        BorderRadius: 8,
+        BackgroundColor: "#FFF",
+    },
+    "button": gox.Style{
+        Padding: 14,
+        BorderRadius: 10,
+        BackgroundColor: "#4A90D9",
+    },
+    "buttonText": gox.Style{
+        FontSize: 16,
+        FontWeight: "bold",
+        Color: "#FFFFFF",
+    },
+    "row": gox.Style{
+        FlexDirection: "row",
+        AlignItems: "center",
+        Gap: 12,
+    },
+    "image": gox.Style{
+        Width: 80,
+        Height: 80,
+        BorderRadius: 40,
     },
 }
 
 view {
-    <gox.View style={styles["container"]}>
-        <gox.Text style={styles["title"]}>Hello GOX!</gox.Text>
-        <gox.Text style={styles["subtitle"]}>Built with Go + native views</gox.Text>
-    </gox.View>
+    <gox.ScrollView style={styles["container"]}>
+        <gox.Text style={styles["title"]}>GOX Component Demo</gox.Text>
+        <gox.Text style={styles["subtitle"]}>All views built with Go</gox.Text>
+
+        <gox.TextInput placeholder="Enter your name..." style={styles["input"]} />
+
+        <gox.Button style={styles["button"]}>
+            <gox.Text style={styles["buttonText"]}>Submit</gox.Text>
+        </gox.Button>
+
+        <gox.View style={styles["row"]}>
+            <gox.Text style={styles["subtitle"]}>Left</gox.Text>
+            <gox.Switch />
+            <gox.Text style={styles["subtitle"]}>Right</gox.Text>
+        </gox.View>
+
+        <gox.Image
+            src="https://picsum.photos/200"
+            contentMode="cover"
+            style={styles["image"]}
+        />
+    </gox.ScrollView>
 }
