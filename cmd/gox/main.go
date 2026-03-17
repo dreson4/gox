@@ -2,6 +2,7 @@
 //
 // Usage:
 //
+//	gox init <name>               Create a new GOX project
 //	gox compile <file.gox|dir>    Compile .gox files to .go
 //	gox generate ios              Generate iOS project in ios/
 //	gox run ios                   Build and run on iOS simulator
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -29,6 +31,8 @@ func main() {
 
 	var err error
 	switch os.Args[1] {
+	case "init":
+		err = cmdInit()
 	case "compile":
 		err = cmdCompile()
 	case "generate":
@@ -51,6 +55,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: gox <command> [args]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "commands:")
+	fmt.Fprintln(os.Stderr, "  init <name>               Create a new GOX project")
 	fmt.Fprintln(os.Stderr, "  compile <file.gox|dir>    Compile .gox files to .go")
 	fmt.Fprintln(os.Stderr, "  generate ios              Generate iOS native project")
 	fmt.Fprintln(os.Stderr, "  run ios [flags]           Build and run on iOS simulator")
@@ -60,6 +65,180 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --logs, -l                Stream app logs after launch (Ctrl+C to stop)")
 	fmt.Fprintln(os.Stderr, "  --perf, -p                Show performance monitor overlay")
 }
+
+// --- init ---
+
+var validProjectName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+func cmdInit() error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: gox init <name>")
+	}
+	name := os.Args[2]
+
+	if !validProjectName.MatchString(name) {
+		return fmt.Errorf("invalid project name %q: use lowercase letters, digits, hyphens, underscores (must start with a letter)", name)
+	}
+
+	if _, err := os.Stat(name); err == nil {
+		return fmt.Errorf("directory %q already exists", name)
+	}
+
+	// Find the gox framework source root
+	goxRoot, err := resolveGoxRootForInit()
+	if err != nil {
+		return err
+	}
+
+	// Create project directory
+	absProject, err := filepath.Abs(name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(absProject, 0755); err != nil {
+		return err
+	}
+
+	// Compute relative path from new project to gox root
+	relPath, err := filepath.Rel(absProject, goxRoot)
+	if err != nil {
+		relPath = goxRoot // fallback to absolute
+	}
+
+	// Write go.mod
+	goMod := fmt.Sprintf("module %s\n\ngo 1.25.0\n\nrequire gox v0.0.0\n\nreplace gox => %s\n", name, relPath)
+	if err := os.WriteFile(filepath.Join(absProject, "go.mod"), []byte(goMod), 0644); err != nil {
+		return err
+	}
+
+	// Write app.gox
+	if err := os.WriteFile(filepath.Join(absProject, "app.gox"), []byte(starterAppGox), 0644); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nCreated %s/\n\n", name)
+	fmt.Printf("  cd %s\n", name)
+	fmt.Printf("  gox run ios\n\n")
+	return nil
+}
+
+// resolveGoxRootForInit finds the gox module root for the init command.
+// Checks: --gox-path flag, GOX_ROOT env, cwd ancestry, executable ancestry.
+func resolveGoxRootForInit() (string, error) {
+	// Check --gox-path flag
+	for i, arg := range os.Args {
+		if arg == "--gox-path" && i+1 < len(os.Args) {
+			return filepath.Abs(os.Args[i+1])
+		}
+	}
+
+	// Check GOX_ROOT env var
+	if root := os.Getenv("GOX_ROOT"); root != "" {
+		if isGoxModuleRoot(root) {
+			return filepath.Abs(root)
+		}
+	}
+
+	// Walk up from cwd
+	if cwd, err := os.Getwd(); err == nil {
+		if root := findGoxModuleRoot(cwd); root != "" {
+			return root, nil
+		}
+	}
+
+	// Walk up from executable location
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			if root := findGoxModuleRoot(filepath.Dir(resolved)); root != "" {
+				return root, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("cannot find gox module root\n\nTry one of:\n  gox init <name> --gox-path /path/to/gox\n  export GOX_ROOT=/path/to/gox\n  run from inside the gox source directory")
+}
+
+// findGoxModuleRoot walks up from dir looking for a go.mod with "module gox".
+func findGoxModuleRoot(dir string) string {
+	dir, _ = filepath.Abs(dir)
+	for {
+		if isGoxModuleRoot(dir) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// isGoxModuleRoot checks if dir contains a go.mod declaring "module gox".
+func isGoxModuleRoot(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "module gox" {
+			return true
+		}
+	}
+	return false
+}
+
+const starterAppGox = `package main
+
+import (
+	"gox"
+	"fmt"
+)
+
+var count = 0
+
+view {
+	<gox.SafeArea>
+		<gox.View style={styles["container"]}>
+			<gox.Text style={styles["title"]}>Hello, GOX!</gox.Text>
+			<gox.Text style={styles["count"]}>{fmt.Sprintf("%d", count)}</gox.Text>
+			<gox.Button onPress={func() { count++ }} style={styles["btn"]}>
+				<gox.Text style={styles["btnText"]}>Tap me</gox.Text>
+			</gox.Button>
+		</gox.View>
+	</gox.SafeArea>
+}
+
+var styles = gox.Styles{
+	"container": gox.Style{
+		Flex:            1,
+		Padding:         32,
+		Gap:             16,
+		BackgroundColor: "#F0F4FF",
+	},
+	"title": gox.Style{
+		FontSize:   28,
+		FontWeight: "bold",
+		Color:      "#1a1a2e",
+	},
+	"count": gox.Style{
+		FontSize:   48,
+		FontWeight: "bold",
+		Color:      "#4A90D9",
+	},
+	"btn": gox.Style{
+		Height:          50,
+		BorderRadius:    12,
+		BackgroundColor: "#4A90D9",
+		AlignItems:      "center",
+		JustifyContent:  "center",
+	},
+	"btnText": gox.Style{
+		FontSize:   18,
+		FontWeight: "bold",
+		Color:      "#FFFFFF",
+	},
+}
+`
 
 // --- compile ---
 

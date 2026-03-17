@@ -11,15 +11,15 @@ package main
 
 import "gox"
 
-var styles = gox.Styles{
-    "container": gox.Style{Flex: 1, Padding: 24},
-    "title":     gox.Style{FontSize: 32, FontWeight: "bold"},
-}
-
 view {
     <gox.View style={styles["container"]}>
         <gox.Text style={styles["title"]}>Hello from Go</gox.Text>
     </gox.View>
+}
+
+var styles = gox.Styles{
+    "container": gox.Style{Flex: 1, Padding: 24},
+    "title":     gox.Style{FontSize: 32, FontWeight: "bold"},
 }
 ```
 
@@ -28,6 +28,24 @@ gox run ios
 ```
 
 That's it. A native mobile app, written in Go, running on your device.
+
+---
+
+## Quickstart
+
+```bash
+# Install the CLI
+go install github.com/dreson4/gox/cmd/gox@latest
+
+# Create a new project
+gox init myapp
+
+# Run it
+cd myapp
+gox run ios
+```
+
+**Requirements:** Go 1.21+, Xcode (for iOS simulator)
 
 ---
 
@@ -338,6 +356,7 @@ What's working today:
 - State management with goroutine-safe `SetState`
 - Diff-based re-rendering with frame hashing
 - Image caching (SDWebImage)
+- `gox init` project scaffolding
 - `gox run ios` with device picker
 - slog logging to terminal via `--logs`
 
@@ -345,7 +364,6 @@ What's coming:
 - Android bridge (same Go code, native Android views)
 - FlatList (virtualized lists)
 - Animations
-- `gox init` scaffolding
 - `gox deploy` for TestFlight/App Store
 - Hot reload
 - More components (Modal, Slider, TabBar)
@@ -357,6 +375,11 @@ What's coming:
 GOX is open source. If you've ever wished you could build mobile apps in Go, we'd love your help.
 
 ```bash
+# Try it out
+go install github.com/dreson4/gox/cmd/gox@latest
+gox init myapp && cd myapp && gox run ios
+
+# Contribute
 git clone https://github.com/dreson4/gox
 cd gox
 go test ./...
