@@ -4,16 +4,20 @@
 //
 //	gox compile <file.gox|dir>    Compile .gox files to .go
 //	gox generate ios              Generate iOS project in ios/
-//	gox run ios                   Compile, generate, build, and run on iOS simulator
+//	gox run ios                   Build and run on iOS simulator
+//	gox run ios --device          Pick a simulator device interactively
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"gox/internal/compiler"
 	"gox/internal/generator"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -49,7 +53,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "commands:")
 	fmt.Fprintln(os.Stderr, "  compile <file.gox|dir>    Compile .gox files to .go")
 	fmt.Fprintln(os.Stderr, "  generate ios              Generate iOS native project")
-	fmt.Fprintln(os.Stderr, "  run ios                   Build and run on iOS simulator")
+	fmt.Fprintln(os.Stderr, "  run ios [--device]        Build and run on iOS simulator")
 }
 
 // --- compile ---
@@ -151,7 +155,6 @@ func generateIOS() error {
 	appName := filepath.Base(cwd)
 	iosDir := filepath.Join(cwd, "ios")
 
-	fmt.Printf("Generating iOS project: %s\n", appName)
 	return generator.GenerateIOS(generator.IOSConfig{
 		AppName:   appName,
 		OutputDir: iosDir,
@@ -182,13 +185,21 @@ func runIOS() error {
 	appName := filepath.Base(cwd)
 	iosDir := filepath.Join(cwd, "ios")
 
+	// Resolve device before building (fail fast if no simulators)
+	interactive := hasFlag("--device", "-d")
+	device, err := resolveDevice(interactive)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Target: %s (%s)\n\n", device.Name, device.Runtime)
+
 	// Step 1: Compile all .gox files
 	fmt.Println("[1/5] Compiling .gox files...")
 	if err := compileAllGox(cwd); err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
 
-	// Step 2: Generate bootstrap (main_gox_bootstrap.go with GoxGetTree export)
+	// Step 2: Generate bootstrap
 	fmt.Println("[2/5] Generating bootstrap...")
 	if err := generator.GenerateBootstrap(cwd); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
@@ -203,19 +214,15 @@ func runIOS() error {
 		return fmt.Errorf("generate: %w", err)
 	}
 
-	// Step 4: Build Go as C archive for iOS simulator
+	// Step 4: Build Go as C archive
 	fmt.Println("[4/5] Building Go → C archive...")
 	if err := buildGoArchive(cwd, iosDir); err != nil {
 		return fmt.Errorf("go build: %w", err)
 	}
 
-	// Step 5: Build with clang and run on simulator
-	fmt.Println("[5/5] Building iOS app...")
-	if err := buildAndRunIOS(cwd, iosDir, appName); err != nil {
-		return fmt.Errorf("build: %w", err)
-	}
-
-	return nil
+	// Step 5: Build native app, install, launch
+	fmt.Println("[5/5] Building and launching...")
+	return buildAndLaunch(iosDir, appName, device)
 }
 
 func compileAllGox(dir string) error {
@@ -223,7 +230,6 @@ func compileAllGox(dir string) error {
 		if err != nil {
 			return err
 		}
-		// Skip ios/, android/, build/ directories
 		if info.IsDir() {
 			base := filepath.Base(path)
 			if base == "ios" || base == "android" || base == "build" || base == ".git" {
@@ -240,7 +246,6 @@ func compileAllGox(dir string) error {
 
 func buildGoArchive(projectDir, iosDir string) error {
 	outPath := filepath.Join(iosDir, "libgox.a")
-
 	sdkPath := iosSimulatorSDK()
 
 	cmd := exec.Command("go", "build",
@@ -254,7 +259,7 @@ func buildGoArchive(projectDir, iosDir string) error {
 		"GOARCH=arm64",
 		"CGO_ENABLED=1",
 		"CC=clang",
-		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64 -fembed-bitcode", sdkPath),
+		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
 		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
 	)
 	cmd.Stdout = os.Stdout
@@ -262,28 +267,22 @@ func buildGoArchive(projectDir, iosDir string) error {
 	return cmd.Run()
 }
 
-func buildAndRunIOS(projectDir, iosDir, appName string) error {
+func buildAndLaunch(iosDir, appName string, device simDevice) error {
 	sdkPath := iosSimulatorSDK()
 	bundleID := "com.gox." + strings.ToLower(appName)
 
-	// Build the .app bundle
+	// Build .app bundle
 	appDir := filepath.Join(iosDir, "build", appName+".app")
 	os.MkdirAll(appDir, 0755)
 
 	// Copy Info.plist
-	plistSrc := filepath.Join(iosDir, appName, "Info.plist")
-	plistData, err := os.ReadFile(plistSrc)
+	plistData, err := os.ReadFile(filepath.Join(iosDir, appName, "Info.plist"))
 	if err != nil {
 		return fmt.Errorf("reading Info.plist: %w", err)
 	}
 	os.WriteFile(filepath.Join(appDir, "Info.plist"), plistData, 0644)
 
-	// Compile bridge.m + link with libgox.a → executable
-	bridgeSrc := filepath.Join(iosDir, appName, "bridge.m")
-	libPath := filepath.Join(iosDir, "libgox.a")
-	headerPath := filepath.Join(iosDir, "libgox.h")
-	outputBin := filepath.Join(appDir, appName)
-
+	// Compile bridge.m + link with libgox.a
 	clangArgs := []string{
 		"-isysroot", sdkPath,
 		"-miphonesimulator-version-min=16.0",
@@ -292,11 +291,11 @@ func buildAndRunIOS(projectDir, iosDir, appName string) error {
 		"-framework", "Foundation",
 		"-framework", "CoreGraphics",
 		"-framework", "Security",
-		"-I", filepath.Dir(headerPath),
-		bridgeSrc,
-		libPath,
+		"-I", iosDir,
+		filepath.Join(iosDir, appName, "bridge.m"),
+		filepath.Join(iosDir, "libgox.a"),
 		"-lresolv",
-		"-o", outputBin,
+		"-o", filepath.Join(appDir, appName),
 	}
 
 	cmd := exec.Command("clang", clangArgs...)
@@ -306,29 +305,182 @@ func buildAndRunIOS(projectDir, iosDir, appName string) error {
 		return fmt.Errorf("clang: %w", err)
 	}
 
-	fmt.Printf("Built %s\n", appDir)
-
-	// Boot simulator
-	fmt.Println("Booting simulator...")
+	// Open Simulator.app
 	_ = exec.Command("open", "-a", "Simulator").Run()
 
-	// Find a booted simulator or boot one
-	bootCmd := exec.Command("xcrun", "simctl", "boot", "iPhone 16")
-	bootCmd.Run() // ignore error if already booted
+	// Boot the device and wait until ready
+	boot := exec.Command("xcrun", "simctl", "boot", device.UDID)
+	boot.Run() // ignore "already booted"
+
+	// Wait for the device to finish booting
+	waitBoot := exec.Command("xcrun", "simctl", "bootstatus", device.UDID, "-b")
+	waitBoot.Stdout = os.Stdout
+	waitBoot.Run()
+
+	// Terminate previous instance if running
+	_ = exec.Command("xcrun", "simctl", "terminate", device.UDID, bundleID).Run()
 
 	// Install
-	install := exec.Command("xcrun", "simctl", "install", "booted", appDir)
-	install.Stdout = os.Stdout
+	install := exec.Command("xcrun", "simctl", "install", device.UDID, appDir)
 	install.Stderr = os.Stderr
 	if err := install.Run(); err != nil {
 		return fmt.Errorf("install: %w", err)
 	}
 
 	// Launch
-	launch := exec.Command("xcrun", "simctl", "launch", "--console-pty", "booted", bundleID)
+	fmt.Printf("\n  Launching %s on %s...\n\n", appName, device.Name)
+	launch := exec.Command("xcrun", "simctl", "launch", device.UDID, bundleID)
 	launch.Stdout = os.Stdout
 	launch.Stderr = os.Stderr
 	return launch.Run()
+}
+
+// --- Simulator device management ---
+
+type simDevice struct {
+	Name      string `json:"name"`
+	UDID      string `json:"udid"`
+	State     string `json:"state"`
+	Runtime   string // e.g. "iOS 26.2"
+	Available bool   `json:"isAvailable"`
+}
+
+// resolveDevice picks a simulator device.
+// If interactive, shows a list and lets the user choose.
+// Otherwise, picks the first available iPhone automatically.
+func resolveDevice(interactive bool) (simDevice, error) {
+	devices, err := listSimulators()
+	if err != nil {
+		return simDevice{}, err
+	}
+
+	if len(devices) == 0 {
+		return simDevice{}, fmt.Errorf("no iOS simulators found. Install them via Xcode → Settings → Platforms")
+	}
+
+	if !interactive {
+		return pickDefaultDevice(devices), nil
+	}
+
+	return pickDeviceInteractively(devices)
+}
+
+func listSimulators() ([]simDevice, error) {
+	out, err := exec.Command("xcrun", "simctl", "list", "devices", "available", "--json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing simulators: %w", err)
+	}
+
+	var result struct {
+		Devices map[string][]simDevice `json:"devices"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, fmt.Errorf("parsing simulator list: %w", err)
+	}
+
+	// Collect runtimes and sort by version (latest first)
+	var runtimes []string
+	for runtime := range result.Devices {
+		runtimes = append(runtimes, runtime)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(runtimes)))
+
+	var all []simDevice
+	for _, runtime := range runtimes {
+		devs := result.Devices[runtime]
+		runtimeName := parseRuntimeName(runtime)
+		if !strings.HasPrefix(runtimeName, "iOS") {
+			continue
+		}
+		for _, d := range devs {
+			if !d.Available {
+				continue
+			}
+			d.Runtime = runtimeName
+			all = append(all, d)
+		}
+	}
+
+	return all, nil
+}
+
+// pickDefaultDevice finds the best default: prefer booted, then latest iPhone Pro.
+// Devices are already sorted latest-runtime-first from listSimulators.
+func pickDefaultDevice(devices []simDevice) simDevice {
+	// Prefer already booted device
+	for _, d := range devices {
+		if d.State == "Booted" {
+			return d
+		}
+	}
+
+	// Prefer iPhone Pro (latest runtime is first in list)
+	for _, d := range devices {
+		if strings.Contains(d.Name, "iPhone") && strings.Contains(d.Name, "Pro") {
+			return d
+		}
+	}
+	for _, d := range devices {
+		if strings.Contains(d.Name, "iPhone") {
+			return d
+		}
+	}
+
+	// Fallback to first available
+	return devices[0]
+}
+
+func pickDeviceInteractively(devices []simDevice) (simDevice, error) {
+	fmt.Println("Available iOS Simulators:")
+	fmt.Println()
+
+	for i, d := range devices {
+		state := ""
+		if d.State == "Booted" {
+			state = " (booted)"
+		}
+		fmt.Printf("  %d) %s — %s%s\n", i+1, d.Name, d.Runtime, state)
+	}
+
+	fmt.Println()
+	fmt.Print("Choose a device (number): ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return simDevice{}, fmt.Errorf("no input")
+	}
+
+	input := strings.TrimSpace(scanner.Text())
+	var choice int
+	if _, err := fmt.Sscanf(input, "%d", &choice); err != nil || choice < 1 || choice > len(devices) {
+		return simDevice{}, fmt.Errorf("invalid choice: %s", input)
+	}
+
+	return devices[choice-1], nil
+}
+
+// parseRuntimeName converts "com.apple.CoreSimulator.SimRuntime.iOS-26-2" → "iOS 26.2"
+func parseRuntimeName(runtime string) string {
+	// Remove prefix
+	name := runtime
+	if idx := strings.LastIndex(name, "."); idx != -1 {
+		name = name[idx+1:]
+	}
+	// "iOS-26-2" → "iOS 26.2"
+	name = strings.Replace(name, "-", " ", 1) // first dash → space (after "iOS")
+	name = strings.ReplaceAll(name, "-", ".")  // remaining dashes → dots
+	return name
+}
+
+func hasFlag(flags ...string) bool {
+	for _, arg := range os.Args[3:] {
+		for _, f := range flags {
+			if arg == f {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func iosSimulatorSDK() string {

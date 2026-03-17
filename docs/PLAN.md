@@ -319,7 +319,7 @@ This touches every layer minimally:
   - [x] 3.2 iOS backend — cgo bridge to UIKit (View→UIView, Text→UILabel)
   - [x] 3.3 iOS project generator — Xcode project + ObjC templates (2 tests)
   - [x] 4.x CLI: `gox compile`, `gox generate ios`, `gox run ios`
-  - [ ] End-to-end: .gox → native app on simulator (needs real device test)
+  - [x] End-to-end: .gox → native app on iOS simulator ✓ (Hello World rendering)
 - [ ] Phase 1: Full Compiler (expand parser for all syntax)
 - [ ] Phase 2: Full Runtime (state, props, lifecycle, nav)
 - [ ] Phase 3: Platform Bridge — add views one by one
