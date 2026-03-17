@@ -320,6 +320,16 @@ This touches every layer minimally:
   - [x] 3.3 iOS project generator — Xcode project + ObjC templates (2 tests)
   - [x] 4.x CLI: `gox compile`, `gox generate ios`, `gox run ios`
   - [x] End-to-end: .gox → native app on iOS simulator ✓ (Hello World rendering)
+  - [x] Views: Text, TextInput, Button, Image, ScrollView, Switch, Row layout
+  - [x] `gox run ios` with auto/interactive device picker
+- [x] **Yoga Layout Engine Integration**
+  - [x] Vendor facebook/yoga C++ sources (internal/yoga/lib/)
+  - [x] Go cgo binding (internal/yoga/yoga.go) — 7 tests
+  - [ ] Layout computer: ComputeLayout(Node, ScreenInfo) → []LayoutFrame
+  - [ ] Update bootstrap: GoxGetLayout() replaces GoxGetTree()
+  - [ ] Rewrite bridge.m: flat frame-based rendering (no UIStackView)
+  - [ ] SafeArea as user-controlled component
+  - [ ] ScrollView: Yoga content size + native scrolling
 - [ ] Phase 1: Full Compiler (expand parser for all syntax)
 - [ ] Phase 2: Full Runtime (state, props, lifecycle, nav)
 - [ ] Phase 3: Platform Bridge — add views one by one
