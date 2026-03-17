@@ -1,7 +1,7 @@
 package platform
 
 import (
-	"gox"
+	"github.com/dreson4/gox"
 	"testing"
 )
 

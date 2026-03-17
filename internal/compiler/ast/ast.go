@@ -4,7 +4,7 @@
 // view block containing a tree of UI nodes.
 package ast
 
-import "gox/internal/compiler/token"
+import "github.com/dreson4/gox/internal/compiler/token"
 
 // File represents a parsed .gox file.
 type File struct {

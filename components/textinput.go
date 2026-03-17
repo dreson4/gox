@@ -1,6 +1,6 @@
 package components
 
-import "gox/internal/yoga"
+import "github.com/dreson4/gox/internal/yoga"
 
 func init() {
 	Register(ComponentDef{

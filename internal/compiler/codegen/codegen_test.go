@@ -1,8 +1,8 @@
 package codegen
 
 import (
-	"gox/internal/compiler/lexer"
-	"gox/internal/compiler/parser"
+	"github.com/dreson4/gox/internal/compiler/lexer"
+	"github.com/dreson4/gox/internal/compiler/parser"
 	"strings"
 	"testing"
 )

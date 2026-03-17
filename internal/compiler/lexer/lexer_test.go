@@ -1,7 +1,7 @@
 package lexer
 
 import (
-	"gox/internal/compiler/token"
+	"github.com/dreson4/gox/internal/compiler/token"
 	"testing"
 )
 

@@ -6,7 +6,7 @@
 // Backend implementation (e.g. iOS uses UIKit via cgo).
 package platform
 
-import "gox"
+import "github.com/dreson4/gox"
 
 // ViewHandle is an opaque reference to a native view.
 // Each platform maps these to concrete types (UIView, android.View, etc.).

@@ -3,8 +3,8 @@ package parser
 
 import (
 	"fmt"
-	"gox/internal/compiler/ast"
-	"gox/internal/compiler/token"
+	"github.com/dreson4/gox/internal/compiler/ast"
+	"github.com/dreson4/gox/internal/compiler/token"
 	"regexp"
 	"strings"
 )

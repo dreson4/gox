@@ -3,9 +3,9 @@ package compiler
 
 import (
 	"fmt"
-	"gox/internal/compiler/codegen"
-	"gox/internal/compiler/lexer"
-	"gox/internal/compiler/parser"
+	"github.com/dreson4/gox/internal/compiler/codegen"
+	"github.com/dreson4/gox/internal/compiler/lexer"
+	"github.com/dreson4/gox/internal/compiler/parser"
 	"path/filepath"
 	"strings"
 )

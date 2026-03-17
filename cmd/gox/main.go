@@ -13,8 +13,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"gox/internal/compiler"
-	"gox/internal/generator"
+	"github.com/dreson4/gox/internal/compiler"
+	"github.com/dreson4/gox/internal/generator"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,14 +173,15 @@ func findGoxModuleRoot(dir string) string {
 	}
 }
 
-// isGoxModuleRoot checks if dir contains a go.mod declaring "module gox".
+// isGoxModuleRoot checks if dir contains a go.mod declaring the gox module.
 func isGoxModuleRoot(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		return false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "module gox" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "module github.com/dreson4/gox" || trimmed == "module gox" {
 			return true
 		}
 	}
@@ -543,7 +544,7 @@ func findGoxRoot(projectDir string) string {
 				}
 			}
 		}
-		if strings.Contains(string(data), "module gox") {
+		if strings.Contains(string(data), "module github.com/dreson4/gox") || strings.Contains(string(data), "module gox") {
 			return projectDir
 		}
 	}

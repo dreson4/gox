@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"gox/internal/compiler/ast"
-	"gox/internal/compiler/lexer"
+	"github.com/dreson4/gox/internal/compiler/ast"
+	"github.com/dreson4/gox/internal/compiler/lexer"
 	"testing"
 )
 

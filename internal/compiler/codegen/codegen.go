@@ -6,7 +6,7 @@ package codegen
 
 import (
 	"fmt"
-	"gox/internal/compiler/ast"
+	"github.com/dreson4/gox/internal/compiler/ast"
 	"strings"
 )
 

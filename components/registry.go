@@ -1,6 +1,6 @@
 package components
 
-import "gox/internal/yoga"
+import "github.com/dreson4/gox/internal/yoga"
 
 // ComponentDef defines a component's layout behavior on the Go side.
 // Each built-in and third-party component registers one of these.

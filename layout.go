@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"hash/fnv"
 
-	"gox/components"
-	"gox/internal/yoga"
+	"github.com/dreson4/gox/components"
+	"github.com/dreson4/gox/internal/yoga"
 )
 
 // LayoutFrame represents a positioned native view with computed coordinates.
