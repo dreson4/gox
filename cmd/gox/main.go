@@ -179,35 +179,43 @@ func runIOS() error {
 		return err
 	}
 
+	appName := filepath.Base(cwd)
+	iosDir := filepath.Join(cwd, "ios")
+
 	// Step 1: Compile all .gox files
-	fmt.Println("Compiling .gox files...")
+	fmt.Println("[1/5] Compiling .gox files...")
 	if err := compileAllGox(cwd); err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
 
-	// Step 2: Generate iOS project
-	fmt.Println("Generating iOS project...")
-	if err := generateIOS(); err != nil {
+	// Step 2: Generate bootstrap (main_gox_bootstrap.go with GoxGetTree export)
+	fmt.Println("[2/5] Generating bootstrap...")
+	if err := generator.GenerateBootstrap(cwd); err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+
+	// Step 3: Generate iOS project
+	fmt.Println("[3/5] Generating iOS project...")
+	if err := generator.GenerateIOS(generator.IOSConfig{
+		AppName:   appName,
+		OutputDir: iosDir,
+	}); err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
 
-	// Step 3: Build Go as C archive for iOS simulator
-	fmt.Println("Building Go library...")
-	iosDir := filepath.Join(cwd, "ios")
+	// Step 4: Build Go as C archive for iOS simulator
+	fmt.Println("[4/5] Building Go → C archive...")
 	if err := buildGoArchive(cwd, iosDir); err != nil {
 		return fmt.Errorf("go build: %w", err)
 	}
 
-	// Step 4: Build with xcodebuild
-	fmt.Println("Building iOS app...")
-	appName := filepath.Base(cwd)
-	if err := buildXcode(iosDir, appName); err != nil {
-		return fmt.Errorf("xcodebuild: %w", err)
+	// Step 5: Build with clang and run on simulator
+	fmt.Println("[5/5] Building iOS app...")
+	if err := buildAndRunIOS(cwd, iosDir, appName); err != nil {
+		return fmt.Errorf("build: %w", err)
 	}
 
-	// Step 5: Launch on simulator
-	fmt.Println("Launching on simulator...")
-	return launchSimulator(iosDir, appName)
+	return nil
 }
 
 func compileAllGox(dir string) error {
@@ -231,10 +239,10 @@ func compileAllGox(dir string) error {
 }
 
 func buildGoArchive(projectDir, iosDir string) error {
-	appName := filepath.Base(projectDir)
 	outPath := filepath.Join(iosDir, "libgox.a")
 
-	// Build for iOS simulator (arm64 on Apple Silicon)
+	sdkPath := iosSimulatorSDK()
+
 	cmd := exec.Command("go", "build",
 		"-buildmode=c-archive",
 		"-o", outPath,
@@ -246,50 +254,78 @@ func buildGoArchive(projectDir, iosDir string) error {
 		"GOARCH=arm64",
 		"CGO_ENABLED=1",
 		"CC=clang",
-		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -mios-simulator-version-min=16.0 -arch arm64", iosSimulatorSDK()),
-		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -mios-simulator-version-min=16.0 -arch arm64", iosSimulatorSDK()),
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	_ = appName
-	return cmd.Run()
-}
-
-func buildXcode(iosDir, appName string) error {
-	projPath := filepath.Join(iosDir, appName+".xcodeproj")
-	cmd := exec.Command("xcodebuild",
-		"-project", projPath,
-		"-scheme", appName,
-		"-sdk", "iphonesimulator",
-		"-configuration", "Debug",
-		"-destination", "platform=iOS Simulator,name=iPhone 16",
-		"build",
+		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64 -fembed-bitcode", sdkPath),
+		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func launchSimulator(iosDir, appName string) error {
-	// Boot simulator if needed
-	_ = exec.Command("xcrun", "simctl", "boot", "iPhone 16").Run()
+func buildAndRunIOS(projectDir, iosDir, appName string) error {
+	sdkPath := iosSimulatorSDK()
+	bundleID := "com.gox." + strings.ToLower(appName)
 
-	// Find the built .app
-	buildDir := filepath.Join(iosDir, "build", "Debug-iphonesimulator")
-	appPath := filepath.Join(buildDir, appName+".app")
+	// Build the .app bundle
+	appDir := filepath.Join(iosDir, "build", appName+".app")
+	os.MkdirAll(appDir, 0755)
 
-	// Install and launch
-	install := exec.Command("xcrun", "simctl", "install", "booted", appPath)
+	// Copy Info.plist
+	plistSrc := filepath.Join(iosDir, appName, "Info.plist")
+	plistData, err := os.ReadFile(plistSrc)
+	if err != nil {
+		return fmt.Errorf("reading Info.plist: %w", err)
+	}
+	os.WriteFile(filepath.Join(appDir, "Info.plist"), plistData, 0644)
+
+	// Compile bridge.m + link with libgox.a → executable
+	bridgeSrc := filepath.Join(iosDir, appName, "bridge.m")
+	libPath := filepath.Join(iosDir, "libgox.a")
+	headerPath := filepath.Join(iosDir, "libgox.h")
+	outputBin := filepath.Join(appDir, appName)
+
+	clangArgs := []string{
+		"-isysroot", sdkPath,
+		"-miphonesimulator-version-min=16.0",
+		"-arch", "arm64",
+		"-framework", "UIKit",
+		"-framework", "Foundation",
+		"-framework", "CoreGraphics",
+		"-framework", "Security",
+		"-I", filepath.Dir(headerPath),
+		bridgeSrc,
+		libPath,
+		"-lresolv",
+		"-o", outputBin,
+	}
+
+	cmd := exec.Command("clang", clangArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("clang: %w", err)
+	}
+
+	fmt.Printf("Built %s\n", appDir)
+
+	// Boot simulator
+	fmt.Println("Booting simulator...")
+	_ = exec.Command("open", "-a", "Simulator").Run()
+
+	// Find a booted simulator or boot one
+	bootCmd := exec.Command("xcrun", "simctl", "boot", "iPhone 16")
+	bootCmd.Run() // ignore error if already booted
+
+	// Install
+	install := exec.Command("xcrun", "simctl", "install", "booted", appDir)
 	install.Stdout = os.Stdout
 	install.Stderr = os.Stderr
 	if err := install.Run(); err != nil {
 		return fmt.Errorf("install: %w", err)
 	}
 
-	// TODO: get bundle ID from config
-	bundleID := "com.gox." + strings.ToLower(appName)
-	launch := exec.Command("xcrun", "simctl", "launch", "booted", bundleID)
+	// Launch
+	launch := exec.Command("xcrun", "simctl", "launch", "--console-pty", "booted", bundleID)
 	launch.Stdout = os.Stdout
 	launch.Stderr = os.Stderr
 	return launch.Run()

@@ -28,3 +28,6 @@ dist/
 
 # Generated files
 *_gox.go
+testapp/ios/
+testapp/*_gox.go
+testapp/main_gox_bootstrap.go

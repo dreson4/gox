@@ -15,12 +15,13 @@ const (
 )
 
 // Node is a single node in the render tree.
+// JSON tags enable serialization for the iOS bridge.
 type Node struct {
-	Type     NodeType
-	Tag      string    // element tag name (e.g. "View", "Text")
-	Props    P         // element properties
-	Text     string    // text content (for NodeText)
-	Children []*Node   // child nodes
+	Type     NodeType `json:"type"`
+	Tag      string   `json:"tag,omitempty"`
+	Props    P        `json:"props,omitempty"`
+	Text     string   `json:"text,omitempty"`
+	Children []*Node  `json:"children,omitempty"`
 }
 
 // P is the props map type used by generated code.

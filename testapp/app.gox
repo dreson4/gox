@@ -1,0 +1,27 @@
+package main
+
+import "gox"
+
+var styles = gox.Styles{
+    "container": gox.Style{
+        Flex: 1,
+        Padding: 24,
+        BackgroundColor: "#F0F4FF",
+    },
+    "title": gox.Style{
+        FontSize: 32,
+        FontWeight: "bold",
+        Color: "#1a1a2e",
+    },
+    "subtitle": gox.Style{
+        FontSize: 18,
+        Color: "#666",
+    },
+}
+
+view {
+    <gox.View style={styles["container"]}>
+        <gox.Text style={styles["title"]}>Hello GOX!</gox.Text>
+        <gox.Text style={styles["subtitle"]}>Built with Go + native views</gox.Text>
+    </gox.View>
+}

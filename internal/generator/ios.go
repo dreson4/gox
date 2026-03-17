@@ -50,12 +50,20 @@ func GenerateIOS(cfg IOSConfig) error {
 		{"templates/main.m", filepath.Join(appDir, "main.m")},
 	}
 
+	replacer := strings.NewReplacer(
+		"{{APP_NAME}}", cfg.AppName,
+		"{{BUNDLE_ID}}", cfg.BundleID,
+		"{{EXECUTABLE_NAME}}", cfg.AppName,
+		"{{DEPLOYMENT_TARGET}}", cfg.DeploymentTarget,
+	)
+
 	for _, f := range filesToCopy {
 		data, err := templates.ReadFile(f.template)
 		if err != nil {
 			return fmt.Errorf("reading template %s: %w", f.template, err)
 		}
-		if err := os.WriteFile(f.output, data, 0644); err != nil {
+		content := replacer.Replace(string(data))
+		if err := os.WriteFile(f.output, []byte(content), 0644); err != nil {
 			return fmt.Errorf("writing %s: %w", f.output, err)
 		}
 	}
