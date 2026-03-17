@@ -1,0 +1,29 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+/gox
+*.exe
+*.test
+*.out
+
+# Build output
+build/
+dist/
+
+# Generated platform projects (auto-managed, never edit manually)
+ios/
+android/
+
+# Generated files
+*_gox.go

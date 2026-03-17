@@ -1,0 +1,9 @@
+package app
+
+import "gox"
+
+view {
+    <gox.View>
+        <gox.Text>Hello World</gox.Text>
+    </gox.View>
+}
