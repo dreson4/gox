@@ -251,7 +251,18 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 				for _, child := range node.Children {
 					if child.Type == NodeElement && child.Tag == "Text" {
 						frame.Text = collectTextContent(child)
-						// Copy child text styling so bridge can apply to button
+					}
+				}
+			}
+			if node.Type == NodeFragment {
+				frame.Tag = "_fragment"
+			}
+			frame.Props = lc.collectVisualProps(node)
+
+			// For buttons, copy child Text styling so bridge can apply to UIButton title
+			if node.Type == NodeElement && node.Tag == "Button" {
+				for _, child := range node.Children {
+					if child.Type == NodeElement && child.Tag == "Text" {
 						if childStyle, ok := lc.getStyle(child); ok {
 							if frame.Props == nil {
 								frame.Props = P{}
@@ -260,13 +271,10 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 							frame.Props["_btnTextSize"] = childStyle.FontSize
 							frame.Props["_btnTextWeight"] = childStyle.FontWeight
 						}
+						break
 					}
 				}
 			}
-			if node.Type == NodeFragment {
-				frame.Tag = "_fragment"
-			}
-			frame.Props = lc.collectVisualProps(node)
 
 			// Register event callbacks (onPress, onChange, etc.)
 			if node.Props != nil {
