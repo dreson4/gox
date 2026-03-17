@@ -65,7 +65,6 @@ import (
     "gox"
     "net/http"
     "encoding/json"
-    "context"
     "fmt"
 )
 
@@ -78,21 +77,22 @@ type Post struct {
     Title string `json:"title"`
 }
 
-func fetchPosts(ctx context.Context) {
-    gox.SetState(func() { loading = true })
+// mount runs once when the screen first renders — like Go's init()
+func mount() {
+    go func() {
+        gox.SetState(func() { loading = true })
 
-    req, _ := http.NewRequestWithContext(ctx, "GET",
-        "https://jsonplaceholder.typicode.com/posts", nil)
-    resp, e := http.DefaultClient.Do(req)
-    if e != nil {
-        gox.SetState(func() { err = e; loading = false })
-        return
-    }
-    defer resp.Body.Close()
+        resp, e := http.Get("https://jsonplaceholder.typicode.com/posts")
+        if e != nil {
+            gox.SetState(func() { err = e; loading = false })
+            return
+        }
+        defer resp.Body.Close()
 
-    var data []Post
-    json.NewDecoder(resp.Body).Decode(&data)
-    gox.SetState(func() { posts = data; loading = false })
+        var data []Post
+        json.NewDecoder(resp.Body).Decode(&data)
+        gox.SetState(func() { posts = data; loading = false })
+    }()
 }
 
 view {
@@ -132,9 +132,9 @@ var styles = gox.Styles{
 
 Notice what's happening:
 
+- **`func mount()`** — lifecycle hook, like Go's `init()`. Runs once when the screen renders
+- **`go func() { ... }()`** — a goroutine, not a Promise or Future
 - **`net/http`** — the Go standard library, not a framework HTTP client
-- **`go fetchPosts(ctx)`** — a goroutine, not a Promise or Future
-- **`context.Context`** — cancel in-flight requests when the user navigates away
 - **`encoding/json`** — standard Go JSON decoding
 - **`gox.SetState`** — safe from any goroutine, triggers UI update on main thread
 
@@ -202,17 +202,37 @@ gox.Navigate(settingsScreen, gox.NavigateOptions{
 
 ## Lifecycle
 
-Every screen gets a context that's cancelled when the screen is popped — goroutines clean up automatically:
+GOX recognizes special function names as lifecycle hooks — just like Go's `init()`:
+
+```gox
+// Runs once when the component first renders
+func mount() {
+    go func() {
+        loading = true
+        posts, err = FetchPosts(props.UserID)
+        loading = false
+    }()
+}
+
+// Runs when the component is removed from the tree
+func unmount() {
+    CancelPendingRequests()
+}
+```
+
+| Function | When it runs |
+|---|---|
+| `func mount()` | Once, when the component first renders |
+| `func unmount()` | Once, when the component is removed |
+| `func update()` | After every re-render *(planned)* |
+| `func focus()` | When the screen gains navigation focus *(planned)* |
+| `func blur()` | When the screen loses navigation focus *(planned)* |
+
+App-level lifecycle is also available:
 
 ```go
-ctx := gox.UseLifecycle(gox.ScreenCallbacks{
-    OnMount: func(ctx context.Context) {
-        go fetchPosts(ctx)  // cancelled automatically if user navigates away
-    },
-    OnAppear: func(ctx context.Context) {
-        go refreshData(ctx) // re-fetch when returning to this screen
-    },
-})
+gox.OnAppForeground(func() { go refreshData() })
+gox.OnAppBackground(func() { saveState() })
 ```
 
 ---
