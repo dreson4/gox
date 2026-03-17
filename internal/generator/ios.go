@@ -15,7 +15,7 @@ import (
 //go:embed templates/bridge_core.m templates/Info.plist templates/main.m templates/components/*.m
 var templates embed.FS
 
-//go:embed all:templates/ios/vendor/SDWebImage
+//go:embed all:templates/ios/third_party/SDWebImage
 var sdwebimageFiles embed.FS
 
 // IOSConfig holds configuration for generating an iOS project.
@@ -105,13 +105,13 @@ func GenerateIOS(cfg IOSConfig) error {
 		return fmt.Errorf("creating SDWebImage dir: %w", err)
 	}
 
-	sdEntries, err := sdwebimageFiles.ReadDir("templates/ios/vendor/SDWebImage")
+	sdEntries, err := sdwebimageFiles.ReadDir("templates/ios/third_party/SDWebImage")
 	if err != nil {
 		return fmt.Errorf("reading SDWebImage dir: %w", err)
 	}
 	for _, entry := range sdEntries {
 		name := entry.Name()
-		data, err := sdwebimageFiles.ReadFile("templates/ios/vendor/SDWebImage/" + name)
+		data, err := sdwebimageFiles.ReadFile("templates/ios/third_party/SDWebImage/" + name)
 		if err != nil {
 			return fmt.Errorf("reading SDWebImage/%s: %w", name, err)
 		}
