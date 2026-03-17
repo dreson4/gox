@@ -126,19 +126,19 @@ type State struct {
     search  string
 }
 
-// mount — standard Go function, special name (like init())
+// onMount — standard Go function, special name (like init())
 // Runs once when the component first renders.
-func mount() {
+func onMount(ctx context.Context) {
     go func() {
         loading = true
-        posts, err = FetchPosts(props.UserID)
+        posts, err = FetchPosts(ctx, props.UserID)
         loading = false
     }()
 }
 
-// unmount — standard Go function, special name
+// onUnmount — standard Go function, special name
 // Runs when the component is removed. Clean up here.
-func unmount() {
+func onUnmount() {
     CancelPendingRequests()
 }
 
@@ -169,8 +169,8 @@ view {
 | Props | `type Props struct { }` | Yes |
 | State | `type State struct { }` | Yes (compiler adds reactivity) |
 | Styles | `var styles = gox.Styles{ }` | Yes |
-| Mount lifecycle | `func mount() { }` | Yes (special name, like `init()`) |
-| Unmount lifecycle | `func unmount() { }` | Yes (special name) |
+| Mount lifecycle | `func onMount(ctx context.Context) { }` | Yes (special name, like `init()`) |
+| Unmount lifecycle | `func onUnmount() { }` | Yes (special name) |
 | Helper functions | `func doSomething() { }` | Yes |
 | Goroutines | `go func() { }()` | Yes |
 | **View template** | **`view { <JSX /> }`** | **No — the one new thing** |
@@ -193,8 +193,10 @@ type Props struct {
 Access via `props.FieldName`:
 
 ```gox
-func mount() {
-    data, err = FetchData(props.UserID)
+func onMount(ctx context.Context) {
+    go func() {
+        data, err = FetchData(ctx, props.UserID)
+    }()
 }
 
 view {
@@ -223,13 +225,15 @@ type State struct {
 }
 ```
 
-Modify by assignment anywhere — in `mount()`, in event handlers, in goroutines, in functions called from the `.go` file:
+Modify by assignment anywhere — in `onMount()`, in event handlers, in goroutines, in functions called from the `.go` file:
 
 ```gox
-func mount() {
-    loading = true
-    items, err = FetchItems()
-    loading = false
+func onMount(ctx context.Context) {
+    go func() {
+        loading = true
+        items, err = FetchItems(ctx)
+        loading = false
+    }()
 }
 ```
 
@@ -246,41 +250,45 @@ The framework ensures state mutations from any goroutine are marshalled to the U
 
 ### Lifecycle Functions
 
-Like Go's `init()`, GOX recognizes specific function names as lifecycle hooks.
+Like Go's `init()`, GOX recognizes specific function names as lifecycle hooks. The compiler detects them and wires them up automatically.
 
 | Function | When it runs |
 |----------|-------------|
-| `func mount()` | Once, when the component first renders |
-| `func unmount()` | Once, when the component is removed from the tree |
+| `func onMount(ctx context.Context)` | Once, when the screen first renders |
+| `func onUnmount()` | Once, when the screen is removed from the tree |
+| `func onAppear(ctx context.Context)` | Each time the screen becomes visible |
+| `func onDisappear()` | Each time the screen is hidden |
 
-Reserved for future use:
-
-| Function | When it runs |
-|----------|-------------|
-| `func update()` | After every re-render |
-| `func focus()` | When the screen gains navigation focus |
-| `func blur()` | When the screen loses navigation focus |
+The `ctx` is a per-screen context that's automatically cancelled when the screen is popped — goroutines clean up without manual bookkeeping.
 
 ```gox
 var timer *gox.Timer
 
-func mount() {
+func onMount(ctx context.Context) {
     // Fetch initial data
     go func() {
         loading = true
-        posts, err = FetchPosts(props.UserID)
+        posts, err = FetchPosts(ctx, props.UserID)
         loading = false
     }()
 
     // Poll for updates every 30 seconds
     timer = gox.Every(30*time.Second, func() {
-        posts, _ = FetchPosts(props.UserID)
+        posts, _ = FetchPosts(ctx, props.UserID)
     })
 }
 
-func unmount() {
+func onUnmount() {
     timer.Stop()
     CancelPendingRequests()
+}
+
+func onAppear(ctx context.Context) {
+    go refreshData(ctx)
+}
+
+func onDisappear() {
+    pausePolling()
 }
 ```
 
@@ -675,8 +683,10 @@ type Props struct {
     ID string    // populated from :id
 }
 
-func mount() {
-    post, err = FetchPost(props.ID)
+func onMount(ctx context.Context) {
+    go func() {
+        post, err = FetchPost(ctx, props.ID)
+    }()
 }
 ```
 
@@ -1128,8 +1138,10 @@ State Detection
   │
   ▼
 Lifecycle Detection
-  │  mount() → register with component mount lifecycle
-  │  unmount() → register with component cleanup lifecycle
+  │  onMount(ctx) → register with component mount lifecycle
+  │  onUnmount() → register with component cleanup lifecycle
+  │  onAppear(ctx) → register with screen appear lifecycle
+  │  onDisappear() → register with screen disappear lifecycle
   │
   ▼
 Emits pure .go file
@@ -1285,15 +1297,15 @@ type State struct {
     search  string
 }
 
-func mount() {
+func onMount(ctx context.Context) {
     go func() {
         loading = true
-        posts, err = FetchPosts(props.UserID)
+        posts, err = FetchPosts(ctx, props.UserID)
         loading = false
     }()
 }
 
-func unmount() {
+func onUnmount() {
     CancelPendingRequests()
 }
 
