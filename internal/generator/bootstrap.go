@@ -22,6 +22,7 @@ package main
 
 /*
 #include <stdlib.h>
+extern void goxScheduleRerender(void);
 */
 import "C"
 import (
@@ -31,6 +32,9 @@ import (
 )
 
 func init() {
+	gox.SetRerender(func() {
+		C.goxScheduleRerender()
+	})
 	gox.SetRootScreen(func() *gox.Node { return render() })
 }
 
@@ -134,6 +138,7 @@ package main
 
 /*
 #include <stdlib.h>
+extern void goxScheduleRerender(void);
 */
 import "C"
 import (
@@ -145,6 +150,9 @@ import (
 
 func init() {
 	gox.EnablePerfMonitor()
+	gox.SetRerender(func() {
+		C.goxScheduleRerender()
+	})
 	gox.SetRootScreen(func() *gox.Node { return render() })
 }
 

@@ -860,6 +860,81 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
     }
 }
 
+// --- Go-initiated rerender (called from SetState) ---
+
+static BOOL goxRerenderScheduled = NO;
+
+void goxScheduleRerender(void) {
+    if (goxRerenderScheduled) return;
+    goxRerenderScheduled = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        goxRerenderScheduled = NO;
+        if (!goxViewController || !goxActiveContext) return;
+
+        const char *json = GoxRerender();
+        if (!json) return;
+
+        NSData *data = [NSData dataWithBytes:json length:strlen(json)];
+        GoxFreeString(json);
+
+        NSDictionary *perfData = nil;
+        NSString *navAction = nil;
+        NSString *navTitle = nil;
+        NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+        if (!frames) return;
+
+        if (perfData) {
+            double renderNs = [perfData[@"renderNs"] doubleValue];
+            double layoutNs = [perfData[@"layoutNs"] doubleValue];
+            double marshalNs = [perfData[@"marshalNs"] doubleValue];
+            goxLastGoMs = (renderNs + layoutNs + marshalNs) / 1e6;
+            goxLastTotalFrames = [perfData[@"frameCount"] intValue];
+        }
+
+        if ([navAction isEqualToString:@"push"]) {
+            UIViewController *newVC = [[UIViewController alloc] init];
+            newVC.view.backgroundColor = [UIColor whiteColor];
+            if (navTitle && [navTitle length] > 0) {
+                newVC.title = navTitle;
+            }
+            GoxRenderContext *newCtx = [[GoxRenderContext alloc] init];
+            [goxContextStack addObject:newCtx];
+            buildUI(newVC, newCtx, frames);
+            goxViewController = newVC;
+            goxActiveContext = newCtx;
+            [goxNavController setNavigationBarHidden:NO animated:YES];
+            [goxNavController pushViewController:newVC animated:YES];
+        } else if ([navAction isEqualToString:@"pop"]) {
+            if ([goxContextStack count] > 1) {
+                [goxContextStack removeLastObject];
+                if ([goxContextStack count] <= 1) {
+                    [goxNavController setNavigationBarHidden:YES animated:YES];
+                }
+                [goxNavController popViewControllerAnimated:YES];
+                goxActiveContext = [goxContextStack lastObject];
+                goxViewController = goxNavController.topViewController;
+
+                const char *reJson = GoxRerender();
+                if (reJson) {
+                    NSData *reData = [NSData dataWithBytes:reJson length:strlen(reJson)];
+                    GoxFreeString(reJson);
+                    NSDictionary *rePerfData = nil;
+                    NSString *reAction = nil;
+                    NSString *reTitle = nil;
+                    NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reTitle);
+                    if (reFrames) {
+                        updateUI(goxViewController, goxActiveContext, reFrames);
+                    }
+                }
+            }
+        } else {
+            CFTimeInterval bridgeStart = CACurrentMediaTime();
+            updateUI(goxViewController, goxActiveContext, frames);
+            goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+        }
+    });
+}
+
 // --- App lifecycle ---
 
 @interface GoxAppDelegate : UIResponder <UIApplicationDelegate, UINavigationControllerDelegate>
