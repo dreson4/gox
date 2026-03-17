@@ -8,11 +8,12 @@ import "gox/internal/compiler/token"
 
 // File represents a parsed .gox file.
 type File struct {
-	Package     string      // package name
-	GoSections  []GoSection // raw Go code blocks (imports, types, funcs, vars)
-	View        *ViewBlock  // the view { } block, nil if none
-	IsComponent   bool   // true if file defines a reusable component (has type Props struct)
-	ComponentName string // exported function name, derived from filename (e.g. "Comment" from comment.gox)
+	Package        string      // package name
+	GoSections     []GoSection // raw Go code blocks (imports, types, funcs, vars)
+	View           *ViewBlock  // the view { } block, nil if none
+	IsComponent    bool        // true if file defines a reusable component (has type Props struct)
+	ComponentName  string      // exported function name, derived from filename (e.g. "Comment" from comment.gox)
+	LifecycleFuncs []string    // detected lifecycle function names (onMount, onUnmount, onAppear, onDisappear)
 }
 
 // GoSection is a chunk of raw Go source code that passes through unchanged.

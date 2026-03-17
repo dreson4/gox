@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gox/internal/compiler/ast"
 	"gox/internal/compiler/token"
+	"regexp"
 	"strings"
 )
 
@@ -60,7 +61,28 @@ func (p *Parser) Parse() (*ast.File, []Error) {
 		}
 	}
 
+	// Detect lifecycle functions in Go sections
+	file.LifecycleFuncs = detectLifecycleFuncs(file.GoSections)
+
 	return file, p.errors
+}
+
+// lifecycleFuncNames are the recognized lifecycle function names.
+var lifecycleFuncNames = []string{"onMount", "onUnmount", "onAppear", "onDisappear"}
+
+// lifecycleRe matches "func onMount(", "func onUnmount(", etc.
+var lifecycleRe = regexp.MustCompile(`\bfunc\s+(onMount|onUnmount|onAppear|onDisappear)\s*\(`)
+
+// detectLifecycleFuncs scans GoSections for lifecycle function declarations.
+func detectLifecycleFuncs(sections []ast.GoSection) []string {
+	var found []string
+	for _, section := range sections {
+		matches := lifecycleRe.FindAllStringSubmatch(section.Code, -1)
+		for _, m := range matches {
+			found = append(found, m[1])
+		}
+	}
+	return found
 }
 
 // parseViewBlock parses the children inside view { ... }.

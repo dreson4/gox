@@ -311,6 +311,119 @@ view {
 	}
 }
 
+func TestGenerateLifecycleMount(t *testing.T) {
+	out := generate(t, `package app
+
+import "gox"
+import "context"
+
+func onMount(ctx context.Context) {
+    go fetchData(ctx)
+}
+
+view {
+    <gox.View>
+        <gox.Text>Hello</gox.Text>
+    </gox.View>
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "gox.UseLifecycle(gox.ScreenCallbacks{") {
+		t.Error("missing UseLifecycle call")
+	}
+	if !strings.Contains(out, "OnMount: onMount,") {
+		t.Error("missing OnMount callback")
+	}
+	if !strings.Contains(out, "_ = ctx") {
+		t.Error("missing ctx suppression")
+	}
+	// Should still have the original function
+	if !strings.Contains(out, "func onMount(ctx context.Context)") {
+		t.Error("original onMount function should be preserved")
+	}
+}
+
+func TestGenerateLifecycleMultiple(t *testing.T) {
+	out := generate(t, `package app
+
+import "gox"
+import "context"
+
+func onMount(ctx context.Context) {}
+func onUnmount() {}
+func onAppear(ctx context.Context) {}
+func onDisappear() {}
+
+view {
+    <gox.Text>Hello</gox.Text>
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "OnMount: onMount,") {
+		t.Error("missing OnMount")
+	}
+	if !strings.Contains(out, "OnUnmount: onUnmount,") {
+		t.Error("missing OnUnmount")
+	}
+	if !strings.Contains(out, "OnAppear: onAppear,") {
+		t.Error("missing OnAppear")
+	}
+	if !strings.Contains(out, "OnDisappear: onDisappear,") {
+		t.Error("missing OnDisappear")
+	}
+}
+
+func TestGenerateLifecycleComponent(t *testing.T) {
+	out := generateComponent(t, `package thread
+
+import "gox"
+import "context"
+
+type Props struct {
+    Author string
+}
+
+func onMount(ctx context.Context) {}
+func onUnmount() {}
+
+view {
+    <gox.Text>{props.Author}</gox.Text>
+}
+`, "Thread")
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "func Thread(props ThreadProps") {
+		t.Error("missing component function")
+	}
+	if !strings.Contains(out, "gox.UseLifecycle(gox.ScreenCallbacks{") {
+		t.Error("missing UseLifecycle in component")
+	}
+	if !strings.Contains(out, "OnMount: onMount,") {
+		t.Error("missing OnMount in component")
+	}
+	if !strings.Contains(out, "OnUnmount: onUnmount,") {
+		t.Error("missing OnUnmount in component")
+	}
+}
+
+func TestGenerateNoLifecycle(t *testing.T) {
+	out := generate(t, `package app
+
+import "gox"
+
+view {
+    <gox.Text>Hello</gox.Text>
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if strings.Contains(out, "UseLifecycle") {
+		t.Error("should not emit UseLifecycle when no lifecycle functions are defined")
+	}
+}
+
 func TestGenerateIfControlFlow(t *testing.T) {
 	out := generate(t, `package app
 

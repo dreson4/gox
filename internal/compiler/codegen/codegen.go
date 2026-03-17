@@ -35,19 +35,21 @@ func (g *Generator) Generate(file *ast.File) string {
 
 	if file.View != nil {
 		if file.IsComponent {
-			g.emitComponentFunc(file.View, file.ComponentName)
+			g.emitComponentFunc(file.View, file.ComponentName, file.LifecycleFuncs)
 		} else {
-			g.emitViewFunc(file.View)
+			g.emitViewFunc(file.View, file.LifecycleFuncs)
 		}
 	}
 
 	return g.buf.String()
 }
 
-func (g *Generator) emitViewFunc(view *ast.ViewBlock) {
+func (g *Generator) emitViewFunc(view *ast.ViewBlock, lifecycleFuncs []string) {
 	g.line("")
 	g.line("func render() *gox.Node {")
 	g.indent++
+
+	g.emitUseLifecycle(lifecycleFuncs)
 
 	if len(view.Children) == 1 {
 		g.iwrite("return ")
@@ -71,10 +73,12 @@ func (g *Generator) emitViewFunc(view *ast.ViewBlock) {
 	g.line("}")
 }
 
-func (g *Generator) emitComponentFunc(view *ast.ViewBlock, name string) {
+func (g *Generator) emitComponentFunc(view *ast.ViewBlock, name string, lifecycleFuncs []string) {
 	g.line("")
 	g.linef("func %s(props %sProps, children ...*gox.Node) *gox.Node {", name, name)
 	g.indent++
+
+	g.emitUseLifecycle(lifecycleFuncs)
 
 	if len(view.Children) == 1 {
 		g.iwrite("return ")
@@ -96,6 +100,37 @@ func (g *Generator) emitComponentFunc(view *ast.ViewBlock, name string) {
 
 	g.indent--
 	g.line("}")
+}
+
+// emitUseLifecycle emits a gox.UseLifecycle call if lifecycle functions are present.
+func (g *Generator) emitUseLifecycle(funcs []string) {
+	if len(funcs) == 0 {
+		return
+	}
+	g.line("ctx := gox.UseLifecycle(gox.ScreenCallbacks{")
+	g.indent++
+	for _, name := range funcs {
+		field := lifecycleFieldName(name)
+		g.linef("%s: %s,", field, name)
+	}
+	g.indent--
+	g.line("})")
+	g.line("_ = ctx")
+}
+
+// lifecycleFieldName maps function names to ScreenCallbacks field names.
+func lifecycleFieldName(name string) string {
+	switch name {
+	case "onMount":
+		return "OnMount"
+	case "onUnmount":
+		return "OnUnmount"
+	case "onAppear":
+		return "OnAppear"
+	case "onDisappear":
+		return "OnDisappear"
+	}
+	return name
 }
 
 func (g *Generator) emitNode(node ast.Node) {

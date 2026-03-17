@@ -22,6 +22,8 @@ extern void GoxHandleEvent(int viewID);
 extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
 extern void GoxHandleBack(void);
+extern void GoxAppDidEnterForeground(void);
+extern void GoxAppDidEnterBackground(void);
 
 // --- Component registry ---
 
@@ -951,6 +953,33 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
     if (perfData) {
         [[GoxPerfOverlay shared] show];
     }
+}
+
+// --- App lifecycle: foreground/background ---
+
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    GoxAppDidEnterForeground();
+
+    // Re-render after returning to foreground
+    if (goxViewController && goxActiveContext) {
+        const char *json = GoxRerender();
+        if (json) {
+            NSData *data = [NSData dataWithBytes:json length:strlen(json)];
+            GoxFreeString(json);
+
+            NSDictionary *perfData = nil;
+            NSString *navAction = nil;
+            NSString *navTitle = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+            if (frames) {
+                updateUI(goxViewController, goxActiveContext, frames);
+            }
+        }
+    }
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)application {
+    GoxAppDidEnterBackground();
 }
 
 // --- UINavigationControllerDelegate: detect swipe-back gesture ---

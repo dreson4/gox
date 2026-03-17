@@ -54,6 +54,8 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 		return []byte("[]")
 	}
 
+	gox.FirePendingMount()
+
 	// Check for pending navigation action
 	action := gox.PendingNavAction()
 	if action != "" {
@@ -109,6 +111,16 @@ func GoxHandleBack() {
 	gox.HandleBack()
 }
 
+//export GoxAppDidEnterForeground
+func GoxAppDidEnterForeground() {
+	gox.AppDidEnterForeground()
+}
+
+//export GoxAppDidEnterBackground
+func GoxAppDidEnterBackground() {
+	gox.AppDidEnterBackground()
+}
+
 //export GoxFreeString
 func GoxFreeString(s *C.char) {
 	C.free(unsafe.Pointer(s))
@@ -162,6 +174,8 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 	if err != nil {
 		return []byte("[]")
 	}
+
+	gox.FirePendingMount()
 
 	perf := gox.PerfData{
 		RenderNs:   t1.Sub(t0).Nanoseconds(),
@@ -231,6 +245,16 @@ func GoxRerender() *C.char {
 //export GoxHandleBack
 func GoxHandleBack() {
 	gox.HandleBack()
+}
+
+//export GoxAppDidEnterForeground
+func GoxAppDidEnterForeground() {
+	gox.AppDidEnterForeground()
+}
+
+//export GoxAppDidEnterBackground
+func GoxAppDidEnterBackground() {
+	gox.AppDidEnterBackground()
 }
 
 //export GoxFreeString
