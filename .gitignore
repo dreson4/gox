@@ -22,8 +22,9 @@ build/
 dist/
 
 # Generated platform projects (auto-managed, never edit manually)
-ios/
-android/
+# Only ignore top-level ios/ and android/ in user projects
+/ios/
+/android/
 
 # Generated files
 *_gox.go
