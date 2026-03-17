@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">GOX</h1>
-  <p align="center"><strong>Build native iOS apps with Go.</strong></p>
-  <p align="center">Go + JSX-like views. No VM. No bridge. No JavaScript. Just a compiled binary.</p>
+  <p align="center"><strong>Build native mobile apps with Go.</strong></p>
+  <p align="center">Go + JSX-like views. iOS and Android. No VM. No bridge. No JavaScript. Just a compiled binary.</p>
 </p>
 
 ---
@@ -11,11 +11,14 @@ package main
 
 import "gox"
 
+var styles = gox.Styles{
+    "container": gox.Style{Flex: 1, Padding: 24},
+    "title":     gox.Style{FontSize: 32, FontWeight: "bold"},
+}
+
 view {
-    <gox.View style={gox.Style{Flex: 1, Padding: 24}}>
-        <gox.Text style={gox.Style{FontSize: 32, FontWeight: "bold"}}>
-            Hello from Go
-        </gox.Text>
+    <gox.View style={styles["container"]}>
+        <gox.Text style={styles["title"]}>Hello from Go</gox.Text>
     </gox.View>
 }
 ```
@@ -24,7 +27,7 @@ view {
 gox run ios
 ```
 
-That's it. A native iOS app, written in Go, running on your device.
+That's it. A native mobile app, written in Go, running on your device.
 
 ---
 
@@ -38,7 +41,7 @@ GOX adds **one thing** to Go: a `view { }` block with JSX-like syntax for declar
 .gox file → GOX compiler → .go file → go build → native binary
 ```
 
-No interpreter. No virtual DOM. No bridge serialization. Go calls UIKit directly.
+No interpreter. No virtual DOM. No bridge serialization. Go calls platform APIs directly.
 
 ### How GOX compares
 
@@ -105,7 +108,7 @@ view {
                 <gox.Text style={styles["error"]}>{fmt.Sprintf("Error: %v", err)}</gox.Text>
             }}
 
-            <gox.ScrollView style={gox.Style{Flex: 1}}>
+            <gox.ScrollView style={styles["scroll"]}>
                 {for _, p := range posts {
                     <gox.View style={styles["card"]}>
                         <gox.Text style={styles["postTitle"]}>{p.Title}</gox.Text>
@@ -121,6 +124,7 @@ var styles = gox.Styles{
     "title":      gox.Style{FontSize: 32, FontWeight: "bold", Color: "#111"},
     "meta":       gox.Style{FontSize: 16, Color: "#666"},
     "error":      gox.Style{FontSize: 16, Color: "#D32F2F"},
+    "scroll":     gox.Style{Flex: 1},
     "card":       gox.Style{Padding: 16, BackgroundColor: "#FFF", BorderRadius: 12},
     "postTitle":  gox.Style{FontSize: 18, FontWeight: "600", Color: "#222"},
 }
@@ -222,6 +226,9 @@ gox init myapp
 # Run on iOS simulator
 gox run ios
 
+# Run on Android emulator
+gox run android
+
 # Run on a specific device
 gox run ios --device "iPhone 16 Pro"
 
@@ -230,32 +237,34 @@ gox run ios --logs
 
 # Production build
 gox build ios
+gox build android
 
-# Deploy to TestFlight
+# Deploy to TestFlight / App Store
 gox deploy testflight
-
-# Ship to the App Store
 gox deploy appstore
+
+# Deploy to Google Play
+gox deploy playstore
 ```
 
-The native Xcode project is auto-generated. You never touch it.
+Native projects (Xcode, Gradle) are auto-generated. You never touch them.
 
 ---
 
 ## Components
 
-GOX maps directly to native UIKit views:
+GOX maps to native platform views:
 
-| GOX | UIKit | Notes |
-|---|---|---|
-| `View` | `UIView` | Flexbox container (powered by Yoga) |
-| `Text` | `UILabel` | Styled text |
-| `Button` | `UIButton` | Tap handler via `onPress` |
-| `TextInput` | `UITextField` | `onChange`, `onSubmit`, `onFocus`, `onBlur` |
-| `Image` | `UIImageView` | URL loading + caching (SDWebImage) |
-| `ScrollView` | `UIScrollView` | Yoga-computed content size |
-| `Switch` | `UISwitch` | Toggle with `onValueChange` |
-| `SafeArea` | Safe area insets | Automatic padding for notch/home indicator |
+| GOX | iOS (UIKit) | Android (planned) | Notes |
+|---|---|---|---|
+| `View` | `UIView` | `ViewGroup` | Flexbox container (powered by Yoga) |
+| `Text` | `UILabel` | `TextView` | Styled text |
+| `Button` | `UIButton` | `Button` | Tap handler via `onPress` |
+| `TextInput` | `UITextField` | `EditText` | `onChange`, `onSubmit`, `onFocus`, `onBlur` |
+| `Image` | `UIImageView` | `ImageView` | URL loading + caching (SDWebImage) |
+| `ScrollView` | `UIScrollView` | `ScrollView` | Yoga-computed content size |
+| `Switch` | `UISwitch` | `SwitchCompat` | Toggle with `onValueChange` |
+| `SafeArea` | Safe area insets | Window insets | Automatic padding for notch/home indicator |
 
 Layout is powered by [Yoga](https://yogalayout.dev/) (the same flexbox engine used by React Native).
 
@@ -274,14 +283,14 @@ Layout is powered by [Yoga](https://yogalayout.dev/) (the same flexbox engine us
 ├─────────────────────────────────────────────┤
 │         cgo bridge (Go ↔ Objective-C)        │
 ├─────────────────────────────────────────────┤
-│        UIKit (native iOS views)              │
+│    UIKit (iOS) / Android Views (Android)     │
 └─────────────────────────────────────────────┘
 ```
 
 1. The GOX compiler turns `.gox` files into pure `.go` files
 2. Your Go code builds a lightweight render tree (`gox.E`, `gox.T`)
 3. Yoga computes flexbox layout into flat frames
-4. The cgo bridge applies frames to native UIKit views
+4. The cgo bridge applies frames to native platform views
 5. A hash-based diff engine skips unchanged views on re-render
 
 ---
@@ -303,7 +312,7 @@ What's working today:
 - slog logging to terminal via `--logs`
 
 What's coming:
-- Android support
+- Android bridge (same Go code, native Android views)
 - FlatList (virtualized lists)
 - Animations
 - `gox init` scaffolding
