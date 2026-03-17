@@ -9,6 +9,8 @@ func screenC() *Node { return T("C") }
 func resetNav() {
 	nav.stack = nil
 	nav.pending = ""
+	nav.options = nil
+	navEventCounter = 0
 }
 
 func TestSetRootScreen(t *testing.T) {
@@ -133,5 +135,100 @@ func TestHandleBackAtRoot(t *testing.T) {
 
 	if NavStackDepth() != 1 {
 		t.Fatalf("expected depth 1, got %d", NavStackDepth())
+	}
+}
+
+func TestNavigateWithOptions(t *testing.T) {
+	resetNav()
+	SetRootScreen(screenA)
+	Navigate(screenB, NavigateOptions{
+		Title:      "Details",
+		LargeTitle: Bool(true),
+	})
+
+	opts := PendingNavOptions()
+	if opts == nil {
+		t.Fatal("expected non-nil options")
+	}
+	if opts.Title != "Details" {
+		t.Fatalf("expected title 'Details', got %q", opts.Title)
+	}
+	if opts.LargeTitle == nil || *opts.LargeTitle != true {
+		t.Fatal("expected LargeTitle=true")
+	}
+}
+
+func TestNavigateNoOptions(t *testing.T) {
+	resetNav()
+	SetRootScreen(screenA)
+	Navigate(screenB)
+
+	opts := PendingNavOptions()
+	if opts != nil {
+		t.Fatal("expected nil options when none provided")
+	}
+}
+
+func TestNavHelper(t *testing.T) {
+	opts := Nav("Thread")
+	if opts.Title != "Thread" {
+		t.Fatalf("expected 'Thread', got %q", opts.Title)
+	}
+}
+
+func TestNavigateWithNav(t *testing.T) {
+	resetNav()
+	SetRootScreen(screenA)
+	Navigate(screenB, Nav("Thread"))
+
+	opts := PendingNavOptions()
+	if opts == nil || opts.Title != "Thread" {
+		t.Fatal("expected title 'Thread'")
+	}
+}
+
+func TestBarButtonEventRegistration(t *testing.T) {
+	resetNav()
+	SetRootScreen(screenA)
+
+	pressed := false
+	Navigate(screenB, NavigateOptions{
+		Title: "Test",
+		RightButtons: []BarButton{
+			{Title: "Edit", OnPress: func() { pressed = true }},
+		},
+	})
+
+	opts := PendingNavOptions()
+	if opts == nil {
+		t.Fatal("expected options")
+	}
+	if len(opts.RightButtons) != 1 {
+		t.Fatalf("expected 1 right button, got %d", len(opts.RightButtons))
+	}
+	if opts.RightButtons[0].eventID >= 0 {
+		t.Fatalf("expected negative event ID, got %d", opts.RightButtons[0].eventID)
+	}
+
+	// Fire the registered event
+	HandleEvent(opts.RightButtons[0].eventID)
+	if !pressed {
+		t.Fatal("bar button OnPress should have fired")
+	}
+}
+
+func TestPendingNavOptionsClearsAfterRead(t *testing.T) {
+	resetNav()
+	SetRootScreen(screenA)
+	Navigate(screenB, Nav("Test"))
+
+	opts := PendingNavOptions()
+	if opts == nil {
+		t.Fatal("expected options on first read")
+	}
+
+	opts2 := PendingNavOptions()
+	if opts2 != nil {
+		t.Fatal("expected nil on second read")
 	}
 }

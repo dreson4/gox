@@ -63,12 +63,63 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 	// Check for pending navigation action
 	action := gox.PendingNavAction()
 	if action != "" {
+		type barButtonJSON struct {
+			Title      string ` + "`" + `json:"title,omitempty"` + "`" + `
+			SystemItem string ` + "`" + `json:"systemItem,omitempty"` + "`" + `
+			EventID    int    ` + "`" + `json:"eventID"` + "`" + `
+		}
+		type headerStyleJSON struct {
+			BackgroundColor string ` + "`" + `json:"backgroundColor,omitempty"` + "`" + `
+			TintColor       string ` + "`" + `json:"tintColor,omitempty"` + "`" + `
+			TitleColor      string ` + "`" + `json:"titleColor,omitempty"` + "`" + `
+		}
+		type navJSON struct {
+			Title          string           ` + "`" + `json:"title,omitempty"` + "`" + `
+			LargeTitle     *bool            ` + "`" + `json:"largeTitle,omitempty"` + "`" + `
+			HeaderShown    *bool            ` + "`" + `json:"headerShown,omitempty"` + "`" + `
+			BackTitle      string           ` + "`" + `json:"backTitle,omitempty"` + "`" + `
+			BackVisible    *bool            ` + "`" + `json:"backVisible,omitempty"` + "`" + `
+			GestureEnabled *bool            ` + "`" + `json:"gestureEnabled,omitempty"` + "`" + `
+			Presentation   string           ` + "`" + `json:"presentation,omitempty"` + "`" + `
+			HeaderStyle    *headerStyleJSON ` + "`" + `json:"headerStyle,omitempty"` + "`" + `
+			RightButtons   []barButtonJSON  ` + "`" + `json:"rightButtons,omitempty"` + "`" + `
+			LeftButtons    []barButtonJSON  ` + "`" + `json:"leftButtons,omitempty"` + "`" + `
+		}
 		type navResult struct {
 			Action string          ` + "`" + `json:"action"` + "`" + `
 			Frames json.RawMessage ` + "`" + `json:"frames"` + "`" + `
-			Title  string          ` + "`" + `json:"title,omitempty"` + "`" + `
+			Nav    *navJSON        ` + "`" + `json:"nav,omitempty"` + "`" + `
 		}
-		result := navResult{Action: action, Frames: framesJSON, Title: gox.PendingNavTitle()}
+		result := navResult{Action: action, Frames: framesJSON}
+		if opts := gox.PendingNavOptions(); opts != nil {
+			nj := &navJSON{
+				Title:          opts.Title,
+				LargeTitle:     opts.LargeTitle,
+				HeaderShown:    opts.HeaderShown,
+				BackTitle:      opts.BackTitle,
+				BackVisible:    opts.BackVisible,
+				GestureEnabled: opts.GestureEnabled,
+				Presentation:   opts.Presentation,
+			}
+			if opts.HeaderStyle != nil {
+				nj.HeaderStyle = &headerStyleJSON{
+					BackgroundColor: opts.HeaderStyle.BackgroundColor,
+					TintColor:       opts.HeaderStyle.TintColor,
+					TitleColor:      opts.HeaderStyle.TitleColor,
+				}
+			}
+			for _, b := range opts.RightButtons {
+				nj.RightButtons = append(nj.RightButtons, barButtonJSON{
+					Title: b.Title, SystemItem: b.SystemItem, EventID: b.EventID(),
+				})
+			}
+			for _, b := range opts.LeftButtons {
+				nj.LeftButtons = append(nj.LeftButtons, barButtonJSON{
+					Title: b.Title, SystemItem: b.SystemItem, EventID: b.EventID(),
+				})
+			}
+			result.Nav = nj
+		}
 		wrapped, _ := json.Marshal(result)
 		return wrapped
 	}
@@ -195,13 +246,64 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 	// Check for pending navigation action
 	action := gox.PendingNavAction()
 	if action != "" {
+		type barButtonJSON struct {
+			Title      string ` + "`" + `json:"title,omitempty"` + "`" + `
+			SystemItem string ` + "`" + `json:"systemItem,omitempty"` + "`" + `
+			EventID    int    ` + "`" + `json:"eventID"` + "`" + `
+		}
+		type headerStyleJSON struct {
+			BackgroundColor string ` + "`" + `json:"backgroundColor,omitempty"` + "`" + `
+			TintColor       string ` + "`" + `json:"tintColor,omitempty"` + "`" + `
+			TitleColor      string ` + "`" + `json:"titleColor,omitempty"` + "`" + `
+		}
+		type navJSON struct {
+			Title          string           ` + "`" + `json:"title,omitempty"` + "`" + `
+			LargeTitle     *bool            ` + "`" + `json:"largeTitle,omitempty"` + "`" + `
+			HeaderShown    *bool            ` + "`" + `json:"headerShown,omitempty"` + "`" + `
+			BackTitle      string           ` + "`" + `json:"backTitle,omitempty"` + "`" + `
+			BackVisible    *bool            ` + "`" + `json:"backVisible,omitempty"` + "`" + `
+			GestureEnabled *bool            ` + "`" + `json:"gestureEnabled,omitempty"` + "`" + `
+			Presentation   string           ` + "`" + `json:"presentation,omitempty"` + "`" + `
+			HeaderStyle    *headerStyleJSON ` + "`" + `json:"headerStyle,omitempty"` + "`" + `
+			RightButtons   []barButtonJSON  ` + "`" + `json:"rightButtons,omitempty"` + "`" + `
+			LeftButtons    []barButtonJSON  ` + "`" + `json:"leftButtons,omitempty"` + "`" + `
+		}
 		type navPerfResult struct {
 			Action string          ` + "`" + `json:"action"` + "`" + `
 			Frames json.RawMessage ` + "`" + `json:"frames"` + "`" + `
 			Perf   gox.PerfData    ` + "`" + `json:"perf"` + "`" + `
-			Title  string          ` + "`" + `json:"title,omitempty"` + "`" + `
+			Nav    *navJSON        ` + "`" + `json:"nav,omitempty"` + "`" + `
 		}
-		result := navPerfResult{Action: action, Frames: framesJSON, Perf: perf, Title: gox.PendingNavTitle()}
+		result := navPerfResult{Action: action, Frames: framesJSON, Perf: perf}
+		if opts := gox.PendingNavOptions(); opts != nil {
+			nj := &navJSON{
+				Title:          opts.Title,
+				LargeTitle:     opts.LargeTitle,
+				HeaderShown:    opts.HeaderShown,
+				BackTitle:      opts.BackTitle,
+				BackVisible:    opts.BackVisible,
+				GestureEnabled: opts.GestureEnabled,
+				Presentation:   opts.Presentation,
+			}
+			if opts.HeaderStyle != nil {
+				nj.HeaderStyle = &headerStyleJSON{
+					BackgroundColor: opts.HeaderStyle.BackgroundColor,
+					TintColor:       opts.HeaderStyle.TintColor,
+					TitleColor:      opts.HeaderStyle.TitleColor,
+				}
+			}
+			for _, b := range opts.RightButtons {
+				nj.RightButtons = append(nj.RightButtons, barButtonJSON{
+					Title: b.Title, SystemItem: b.SystemItem, EventID: b.EventID(),
+				})
+			}
+			for _, b := range opts.LeftButtons {
+				nj.LeftButtons = append(nj.LeftButtons, barButtonJSON{
+					Title: b.Title, SystemItem: b.SystemItem, EventID: b.EventID(),
+				})
+			}
+			result.Nav = nj
+		}
 		wrapped, _ := json.Marshal(result)
 		return wrapped
 	}

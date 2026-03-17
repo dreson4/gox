@@ -269,8 +269,8 @@ static double getMemoryMB(void) {
 }
 
 // Parse JSON response — detects bare array, perf-wrapped object, or nav action.
-// Returns the frames array and optionally extracts perf data, navigation action, and title.
-static NSArray* parseGoxResponse(NSData *data, NSDictionary **outPerf, NSString **outAction, NSString **outTitle) {
+// Returns the frames array and optionally extracts perf data, navigation action, and nav options.
+static NSArray* parseGoxResponse(NSData *data, NSDictionary **outPerf, NSString **outAction, NSDictionary **outNav) {
     NSError *error = nil;
     id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
     if (error || !parsed) return nil;
@@ -278,17 +278,173 @@ static NSArray* parseGoxResponse(NSData *data, NSDictionary **outPerf, NSString 
     if ([parsed isKindOfClass:[NSArray class]]) {
         if (outPerf) *outPerf = nil;
         if (outAction) *outAction = nil;
-        if (outTitle) *outTitle = nil;
+        if (outNav) *outNav = nil;
         return parsed;
     }
     if ([parsed isKindOfClass:[NSDictionary class]]) {
         if (outPerf) *outPerf = parsed[@"perf"];
         if (outAction) *outAction = parsed[@"action"];
-        if (outTitle) *outTitle = parsed[@"title"];
+        if (outNav) *outNav = parsed[@"nav"];
         NSArray *frames = parsed[@"frames"];
         if ([frames isKindOfClass:[NSArray class]]) return frames;
     }
     return nil;
+}
+
+// --- Bar button handler for nav bar items ---
+
+@interface GoxBarButtonHandler : NSObject
+@property (nonatomic, assign) int eventID;
+- (void)handleTap;
+@end
+
+@implementation GoxBarButtonHandler
+- (void)handleTap {
+    GoxHandleEvent(self.eventID);
+    if (goxViewController && goxActiveContext) {
+        const char *json = GoxRerender();
+        if (json) {
+            NSData *data = [NSData dataWithBytes:json length:strlen(json)];
+            GoxFreeString(json);
+            NSDictionary *perfData = nil;
+            NSString *navAction = nil;
+            NSDictionary *navOpts = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
+            if (frames) {
+                CFTimeInterval bridgeStart = CACurrentMediaTime();
+                updateUI(goxViewController, goxActiveContext, frames);
+                goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+            }
+        }
+    }
+}
+@end
+
+// Retained handlers to prevent ARC deallocation
+static NSMutableArray *goxBarButtonHandlers = nil;
+
+static UIBarButtonItem* createBarButtonItem(NSDictionary *btnDict) {
+    int eventID = [btnDict[@"eventID"] intValue];
+
+    GoxBarButtonHandler *handler = [[GoxBarButtonHandler alloc] init];
+    handler.eventID = eventID;
+    if (!goxBarButtonHandlers) goxBarButtonHandlers = [NSMutableArray new];
+    [goxBarButtonHandlers addObject:handler];
+
+    NSString *systemItem = btnDict[@"systemItem"];
+    if (systemItem && [systemItem length] > 0) {
+        UIBarButtonSystemItem item = UIBarButtonSystemItemDone;
+        if ([systemItem isEqualToString:@"done"]) item = UIBarButtonSystemItemDone;
+        else if ([systemItem isEqualToString:@"cancel"]) item = UIBarButtonSystemItemCancel;
+        else if ([systemItem isEqualToString:@"edit"]) item = UIBarButtonSystemItemEdit;
+        else if ([systemItem isEqualToString:@"add"]) item = UIBarButtonSystemItemAdd;
+        else if ([systemItem isEqualToString:@"close"]) item = UIBarButtonSystemItemClose;
+        else if ([systemItem isEqualToString:@"search"]) item = UIBarButtonSystemItemSearch;
+        else if ([systemItem isEqualToString:@"compose"]) item = UIBarButtonSystemItemCompose;
+
+        return [[UIBarButtonItem alloc] initWithBarButtonSystemItem:item
+                                                            target:handler
+                                                            action:@selector(handleTap)];
+    }
+
+    NSString *title = btnDict[@"title"];
+    return [[UIBarButtonItem alloc] initWithTitle:(title ?: @"")
+                                            style:UIBarButtonItemStylePlain
+                                           target:handler
+                                           action:@selector(handleTap)];
+}
+
+// Apply navigation options to a view controller
+static void applyNavOptions(UIViewController *vc, NSDictionary *navOpts, UINavigationController *navCtrl) {
+    if (!navOpts || ![navOpts isKindOfClass:[NSDictionary class]]) return;
+
+    // Title
+    NSString *title = navOpts[@"title"];
+    if (title && [title length] > 0) {
+        vc.title = title;
+    }
+
+    // Large title
+    NSNumber *largeTitle = navOpts[@"largeTitle"];
+    if (largeTitle) {
+        if ([largeTitle boolValue]) {
+            navCtrl.navigationBar.prefersLargeTitles = YES;
+            vc.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
+        } else {
+            vc.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+        }
+    }
+
+    // Back button title (for the NEXT screen's back button)
+    NSString *backTitle = navOpts[@"backTitle"];
+    if (backTitle) {
+        vc.navigationItem.backButtonTitle = backTitle;
+    }
+
+    // Back button visibility
+    NSNumber *backVisible = navOpts[@"backVisible"];
+    if (backVisible && ![backVisible boolValue]) {
+        vc.navigationItem.hidesBackButton = YES;
+    }
+
+    // Gesture enabled
+    NSNumber *gestureEnabled = navOpts[@"gestureEnabled"];
+    if (gestureEnabled && navCtrl) {
+        navCtrl.interactivePopGestureRecognizer.enabled = [gestureEnabled boolValue];
+    }
+
+    // Header style
+    NSDictionary *headerStyle = navOpts[@"headerStyle"];
+    if (headerStyle) {
+        UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
+        [appearance configureWithOpaqueBackground];
+
+        NSString *bgColor = headerStyle[@"backgroundColor"];
+        if (bgColor && [bgColor length] > 0) {
+            appearance.backgroundColor = goxParseColor(bgColor);
+        }
+
+        NSString *titleColor = headerStyle[@"titleColor"];
+        if (titleColor && [titleColor length] > 0) {
+            UIColor *tc = goxParseColor(titleColor);
+            appearance.titleTextAttributes = @{NSForegroundColorAttributeName: tc};
+            appearance.largeTitleTextAttributes = @{NSForegroundColorAttributeName: tc};
+        }
+
+        vc.navigationItem.standardAppearance = appearance;
+        vc.navigationItem.scrollEdgeAppearance = appearance;
+        vc.navigationItem.compactAppearance = appearance;
+
+        NSString *tintColor = headerStyle[@"tintColor"];
+        if (tintColor && [tintColor length] > 0) {
+            navCtrl.navigationBar.tintColor = goxParseColor(tintColor);
+        }
+    }
+
+    // Clear previous bar button handlers
+    [goxBarButtonHandlers removeAllObjects];
+
+    // Right bar buttons
+    NSArray *rightButtons = navOpts[@"rightButtons"];
+    if (rightButtons && [rightButtons count] > 0) {
+        NSMutableArray *items = [NSMutableArray new];
+        for (NSDictionary *btn in rightButtons) {
+            UIBarButtonItem *item = createBarButtonItem(btn);
+            if (item) [items addObject:item];
+        }
+        vc.navigationItem.rightBarButtonItems = items;
+    }
+
+    // Left bar buttons
+    NSArray *leftButtons = navOpts[@"leftButtons"];
+    if (leftButtons && [leftButtons count] > 0) {
+        NSMutableArray *items = [NSMutableArray new];
+        for (NSDictionary *btn in leftButtons) {
+            UIBarButtonItem *item = createBarButtonItem(btn);
+            if (item) [items addObject:item];
+        }
+        vc.navigationItem.leftBarButtonItems = items;
+    }
 }
 
 @interface GoxPerfOverlay : NSObject
@@ -443,8 +599,8 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
 
             NSDictionary *perfData = nil;
             NSString *navAction = nil;
-            NSString *navTitle = nil;
-            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+            NSDictionary *navOpts = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
             if (frames) {
                 // Extract Go timing if perf is enabled
                 if (perfData) {
@@ -463,10 +619,8 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
                     UIViewController *newVC = [[UIViewController alloc] init];
                     newVC.view.backgroundColor = [UIColor whiteColor];
 
-                    // Set native navigation bar title
-                    if (navTitle && [navTitle length] > 0) {
-                        newVC.title = navTitle;
-                    }
+                    // Apply navigation options (title, style, buttons, etc.)
+                    applyNavOptions(newVC, navOpts, goxNavController);
 
                     GoxRenderContext *newCtx = [[GoxRenderContext alloc] init];
 
@@ -482,8 +636,12 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
                     goxViewController = newVC;
                     goxActiveContext = newCtx;
 
-                    // Show native navigation bar and push
-                    [goxNavController setNavigationBarHidden:NO animated:YES];
+                    // Show/hide nav bar based on headerShown option
+                    BOOL headerShown = YES;
+                    if (navOpts && navOpts[@"headerShown"]) {
+                        headerShown = [navOpts[@"headerShown"] boolValue];
+                    }
+                    [goxNavController setNavigationBarHidden:!headerShown animated:NO];
                     [goxNavController pushViewController:newVC animated:YES];
 
                     NSLog(@"GOX_INTERNAL: Pushed screen with %lu frames", (unsigned long)[frames count]);
@@ -514,8 +672,8 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
 
                             NSDictionary *rePerfData = nil;
                             NSString *reAction = nil;
-                            NSString *reTitle = nil;
-                            NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reTitle);
+                            NSDictionary *reNav = nil;
+                            NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reNav);
                             if (reFrames) {
                                 CFTimeInterval bridgeStart = CACurrentMediaTime();
                                 updateUI(goxViewController, goxActiveContext, reFrames);
@@ -879,8 +1037,8 @@ void goxScheduleRerender(void) {
 
         NSDictionary *perfData = nil;
         NSString *navAction = nil;
-        NSString *navTitle = nil;
-        NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+        NSDictionary *navOpts = nil;
+        NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
         if (!frames) return;
 
         if (perfData) {
@@ -894,15 +1052,17 @@ void goxScheduleRerender(void) {
         if ([navAction isEqualToString:@"push"]) {
             UIViewController *newVC = [[UIViewController alloc] init];
             newVC.view.backgroundColor = [UIColor whiteColor];
-            if (navTitle && [navTitle length] > 0) {
-                newVC.title = navTitle;
-            }
+            applyNavOptions(newVC, navOpts, goxNavController);
             GoxRenderContext *newCtx = [[GoxRenderContext alloc] init];
             [goxContextStack addObject:newCtx];
             buildUI(newVC, newCtx, frames);
             goxViewController = newVC;
             goxActiveContext = newCtx;
-            [goxNavController setNavigationBarHidden:NO animated:YES];
+            BOOL headerShown = YES;
+            if (navOpts && navOpts[@"headerShown"]) {
+                headerShown = [navOpts[@"headerShown"] boolValue];
+            }
+            [goxNavController setNavigationBarHidden:!headerShown animated:YES];
             [goxNavController pushViewController:newVC animated:YES];
         } else if ([navAction isEqualToString:@"pop"]) {
             if ([goxContextStack count] > 1) {
@@ -920,8 +1080,8 @@ void goxScheduleRerender(void) {
                     GoxFreeString(reJson);
                     NSDictionary *rePerfData = nil;
                     NSString *reAction = nil;
-                    NSString *reTitle = nil;
-                    NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reTitle);
+                    NSDictionary *reNav = nil;
+                    NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reNav);
                     if (reFrames) {
                         updateUI(goxViewController, goxActiveContext, reFrames);
                     }
@@ -1000,8 +1160,8 @@ void goxScheduleRerender(void) {
 
     NSDictionary *perfData = nil;
     NSString *navAction = nil;
-    NSString *navTitle = nil;
-    NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+    NSDictionary *navOpts = nil;
+    NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
 
     if (!frames) {
         NSLog(@"GOX_INTERNAL: JSON parse error");
@@ -1044,8 +1204,8 @@ void goxScheduleRerender(void) {
 
             NSDictionary *perfData = nil;
             NSString *navAction = nil;
-            NSString *navTitle = nil;
-            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+            NSDictionary *navOpts = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
             if (frames) {
                 updateUI(goxViewController, goxActiveContext, frames);
             }
@@ -1095,8 +1255,8 @@ void goxScheduleRerender(void) {
 
             NSDictionary *perfData = nil;
             NSString *navAction = nil;
-            NSString *navTitle = nil;
-            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navTitle);
+            NSDictionary *navOpts = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
             if (frames) {
                 CFTimeInterval bridgeStart = CACurrentMediaTime();
                 updateUI(goxViewController, goxActiveContext, frames);

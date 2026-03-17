@@ -6,17 +6,66 @@ import "context"
 // Every screen in a GOX app is just a component function.
 type Screen func() *Node
 
+// NavigateOptions configures the navigation bar and presentation for a pushed screen.
+// All fields are optional — zero value means "use default".
+type NavigateOptions struct {
+	Title          string       // nav bar title
+	LargeTitle     *bool        // nil=inherit, true=always, false=never
+	HeaderShown    *bool        // nil/true=show nav bar, false=hide
+	BackTitle      string       // override back button text on NEXT pushed screen
+	BackVisible    *bool        // nil/true=show back button, false=hide
+	GestureEnabled *bool        // nil/true=allow swipe-back, false=disable
+	Presentation   string       // "push" (default) or "modal" (future)
+	HeaderStyle    *HeaderStyle // nav bar appearance
+	RightButtons   []BarButton  // right side bar button items
+	LeftButtons    []BarButton  // left side bar button items
+}
+
+// HeaderStyle configures the navigation bar's visual appearance.
+type HeaderStyle struct {
+	BackgroundColor string // hex color for nav bar background
+	TintColor       string // color for buttons and back arrow
+	TitleColor      string // color for title text
+}
+
+// BarButton defines a navigation bar button item.
+type BarButton struct {
+	Title      string // text label (use Title OR SystemItem, not both)
+	SystemItem string // system icon: "done", "cancel", "edit", "add", "close", "search", "compose"
+	OnPress    func() // callback when tapped
+	eventID    int    // assigned by registerNavEvents, used for JSON serialization
+}
+
+// EventID returns the assigned event ID for this bar button.
+// Used by the bootstrap for JSON serialization.
+func (b BarButton) EventID() int {
+	return b.eventID
+}
+
+// Nav creates NavigateOptions with just a title — the common case.
+func Nav(title string) NavigateOptions {
+	return NavigateOptions{Title: title}
+}
+
+// Bool returns a pointer to a bool value, for use with optional bool fields.
+func Bool(v bool) *bool {
+	return &v
+}
+
 // Navigation stack — manages screen history for push/pop navigation.
 var nav struct {
 	stack   []screenEntry
-	pending string // "push", "pop", ""
-	title   string // title for the next pushed screen
+	pending string            // "push", "pop", ""
+	options *NavigateOptions  // options for the next pushed screen
 }
 
+// Counter for bar button event IDs (negative to avoid collision with layout IDs).
+var navEventCounter int
+
 // Navigate pushes a new screen onto the navigation stack.
-// An optional title sets the native navigation bar title.
+// Accepts optional NavigateOptions to configure the navigation bar.
 // Fires OnDisappear on the current top screen before pushing.
-func Navigate(screen Screen, title ...string) {
+func Navigate(screen Screen, opts ...NavigateOptions) {
 	// Fire OnDisappear on current top screen
 	if len(nav.stack) > 0 {
 		top := &nav.stack[len(nav.stack)-1]
@@ -33,18 +82,42 @@ func Navigate(screen Screen, title ...string) {
 		cancel: cancel,
 	})
 	nav.pending = "push"
-	if len(title) > 0 {
-		nav.title = title[0]
+	if len(opts) > 0 {
+		o := opts[0]
+		registerNavEvents(&o)
+		nav.options = &o
 	} else {
-		nav.title = ""
+		nav.options = nil
 	}
 }
 
-// PendingNavTitle returns and clears the pending navigation title.
-func PendingNavTitle() string {
-	t := nav.title
-	nav.title = ""
-	return t
+// registerNavEvents assigns negative event IDs to bar button callbacks
+// and registers them in the event system.
+func registerNavEvents(opts *NavigateOptions) {
+	if opts == nil {
+		return
+	}
+	for i := range opts.RightButtons {
+		if opts.RightButtons[i].OnPress != nil {
+			navEventCounter--
+			RegisterEvent(navEventCounter, opts.RightButtons[i].OnPress)
+			opts.RightButtons[i].eventID = navEventCounter
+		}
+	}
+	for i := range opts.LeftButtons {
+		if opts.LeftButtons[i].OnPress != nil {
+			navEventCounter--
+			RegisterEvent(navEventCounter, opts.LeftButtons[i].OnPress)
+			opts.LeftButtons[i].eventID = navEventCounter
+		}
+	}
+}
+
+// PendingNavOptions returns and clears the pending navigation options.
+func PendingNavOptions() *NavigateOptions {
+	opts := nav.options
+	nav.options = nil
+	return opts
 }
 
 // GoBack pops the current screen and returns to the previous one.
