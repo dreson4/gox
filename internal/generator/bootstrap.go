@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateBootstrap creates the main_gox_bootstrap.go file that
-// exports GoxGetLayout for the iOS bridge to call.
+// exports GoxGetLayout and GoxHandleEvent for the iOS bridge.
 func GenerateBootstrap(projectDir string) error {
 	path := filepath.Join(projectDir, "main_gox_bootstrap.go")
 	return os.WriteFile(path, []byte(bootstrapCode), 0644)
@@ -26,25 +26,59 @@ import (
 	"unsafe"
 )
 
-//export GoxGetLayout
-func GoxGetLayout(width, height, safeTop, safeRight, safeBottom, safeLeft C.double) *C.char {
+// renderAndLayout calls render() and computes layout for the given screen.
+func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 	tree := render()
 	if tree == nil {
-		return C.CString("[]")
+		return []byte("[]")
 	}
 	screen := gox.ScreenInfo{
-		Width:      float64(width),
-		Height:     float64(height),
-		SafeTop:    float64(safeTop),
-		SafeRight:  float64(safeRight),
-		SafeBottom: float64(safeBottom),
-		SafeLeft:   float64(safeLeft),
+		Width:      w,
+		Height:     h,
+		SafeTop:    safeT,
+		SafeRight:  safeR,
+		SafeBottom: safeB,
+		SafeLeft:   safeL,
 	}
 	frames := gox.ComputeLayout(tree, screen)
 	data, err := json.Marshal(frames)
 	if err != nil {
-		return C.CString("[]")
+		return []byte("[]")
 	}
+	return data
+}
+
+// Saved screen info for re-renders
+var savedScreen struct {
+	w, h, safeT, safeR, safeB, safeL float64
+}
+
+//export GoxGetLayout
+func GoxGetLayout(w, h, safeT, safeR, safeB, safeL C.double) *C.char {
+	savedScreen.w = float64(w)
+	savedScreen.h = float64(h)
+	savedScreen.safeT = float64(safeT)
+	savedScreen.safeR = float64(safeR)
+	savedScreen.safeB = float64(safeB)
+	savedScreen.safeL = float64(safeL)
+
+	data := renderAndLayout(float64(w), float64(h),
+		float64(safeT), float64(safeR), float64(safeB), float64(safeL))
+	return C.CString(string(data))
+}
+
+//export GoxHandleEvent
+func GoxHandleEvent(viewID C.int) {
+	gox.HandleEvent(int(viewID))
+}
+
+//export GoxRerender
+func GoxRerender() *C.char {
+	data := renderAndLayout(
+		savedScreen.w, savedScreen.h,
+		savedScreen.safeT, savedScreen.safeR,
+		savedScreen.safeB, savedScreen.safeL,
+	)
 	return C.CString(string(data))
 }
 

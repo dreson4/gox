@@ -1,74 +1,77 @@
 package main
 
-import "gox"
+import (
+    "gox"
+    "fmt"
+)
+
+var count = 0
+var showBox = false
 
 var styles = gox.Styles{
     "container": gox.Style{
         Flex: 1,
-        Padding: 24,
+        Padding: 32,
+        Gap: 16,
         BackgroundColor: "#F0F4FF",
     },
     "title": gox.Style{
-        FontSize: 28,
+        FontSize: 32,
         FontWeight: "bold",
         Color: "#1a1a2e",
     },
-    "subtitle": gox.Style{
-        FontSize: 16,
-        Color: "#666",
+    "count": gox.Style{
+        FontSize: 48,
+        FontWeight: "bold",
+        Color: "#4A90D9",
     },
-    "input": gox.Style{
-        Height: 44,
-        BorderRadius: 8,
-        BackgroundColor: "#FFF",
-    },
-    "button": gox.Style{
-        Height: 48,
-        BorderRadius: 10,
+    "btn": gox.Style{
+        Height: 50,
+        BorderRadius: 12,
         BackgroundColor: "#4A90D9",
         AlignItems: "center",
         JustifyContent: "center",
     },
-    "buttonText": gox.Style{
-        FontSize: 16,
+    "btnText": gox.Style{
+        FontSize: 18,
         FontWeight: "bold",
         Color: "#FFFFFF",
     },
-    "row": gox.Style{
-        FlexDirection: "row",
+    "toggleBtn": gox.Style{
+        Height: 50,
+        BorderRadius: 12,
+        BackgroundColor: "#e94560",
         AlignItems: "center",
-        Gap: 12,
-        Height: 40,
+        JustifyContent: "center",
     },
-    "image": gox.Style{
-        Width: 80,
-        Height: 80,
-        BorderRadius: 40,
+    "box": gox.Style{
+        Height: 100,
+        BorderRadius: 16,
+        BackgroundColor: "#16213e",
     },
 }
 
 view {
     <gox.SafeArea>
-        <gox.ScrollView style={styles["container"]}>
-            <gox.Text style={styles["title"]}>GOX + Yoga Layout</gox.Text>
-            <gox.Text style={styles["subtitle"]}>Flexbox-powered native views</gox.Text>
+        <gox.View style={styles["container"]}>
+            <gox.Text style={styles["title"]}>State Demo</gox.Text>
+            <gox.Text style={styles["count"]}>{fmt.Sprintf("%d", count)}</gox.Text>
 
-            <gox.TextInput placeholder="Enter your name..." style={styles["input"]} />
-
-            <gox.Button style={styles["button"]}>
-                <gox.Text style={styles["buttonText"]}>Submit</gox.Text>
+            <gox.Button onPress={func() { count++ }} style={styles["btn"]}>
+                <gox.Text style={styles["btnText"]}>+1</gox.Text>
             </gox.Button>
 
-            <gox.View style={styles["row"]}>
-                <gox.Text style={styles["subtitle"]}>Dark mode</gox.Text>
-                <gox.Switch />
-            </gox.View>
+            <gox.Button onPress={func() { count-- }} style={styles["btn"]}>
+                <gox.Text style={styles["btnText"]}>-1</gox.Text>
+            </gox.Button>
 
-            <gox.Image
-                src="https://picsum.photos/200"
-                contentMode="cover"
-                style={styles["image"]}
-            />
-        </gox.ScrollView>
+            <gox.Button onPress={func() { showBox = !showBox }} style={styles["toggleBtn"]}>
+                <gox.Text style={styles["btnText"]}>Toggle Box</gox.Text>
+            </gox.Button>
+
+            {if showBox {
+                <gox.View style={styles["box"]} />
+            }}
+        </gox.View>
     </gox.SafeArea>
 }

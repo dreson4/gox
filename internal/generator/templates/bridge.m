@@ -13,7 +13,15 @@
 
 // Exported from the Go static library
 extern const char* GoxGetLayout(double w, double h, double safeT, double safeR, double safeB, double safeL);
+extern void GoxHandleEvent(int viewID);
+extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
+
+// Forward declaration
+static void buildUI(UIViewController *vc, NSArray *frames);
+
+// Global VC reference for re-renders
+static UIViewController *goxViewController = nil;
 
 // --- Color parsing ---
 
@@ -254,9 +262,50 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
     }
 }
 
+// --- Event handling ---
+
+// Helper to handle button taps — stores the view ID and calls Go
+@interface GoxEventHandler : NSObject
+@property (nonatomic, assign) int viewID;
+- (void)handleTap;
+@end
+
+@implementation GoxEventHandler
+- (void)handleTap {
+    NSLog(@"GOX: Button tapped, viewID=%d", self.viewID);
+    GoxHandleEvent(self.viewID);
+
+    // Re-render: get new layout from Go and rebuild UI
+    if (goxViewController) {
+        const char *json = GoxRerender();
+        if (json) {
+            NSData *data = [NSData dataWithBytes:json length:strlen(json)];
+            GoxFreeString(json);
+
+            NSError *error = nil;
+            NSArray *frames = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+            if (frames && !error) {
+                // Remove all existing subviews
+                for (UIView *sub in [goxViewController.view.subviews copy]) {
+                    [sub removeFromSuperview];
+                }
+                // Rebuild with new frames
+                buildUI(goxViewController, frames);
+                NSLog(@"GOX: Re-rendered with %lu frames", (unsigned long)[frames count]);
+            }
+        }
+    }
+}
+@end
+
+// Keep event handlers alive
+static NSMutableArray *goxEventHandlers = nil;
+
 // --- Build UI from flat layout frames ---
 
 static void buildUI(UIViewController *vc, NSArray *frames) {
+    // Clear old event handlers
+    goxEventHandlers = [NSMutableArray new];
     NSMutableDictionary<NSNumber*, UIView*> *views = [NSMutableDictionary new];
 
     // Pass 1: Create all views with frames
@@ -287,6 +336,19 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         NSString *text = frame[@"text"];
         if (text && [text length] > 0) {
             setTextContent(view, text, props);
+        }
+
+        // Wire up onPress events for buttons
+        NSNumber *hasOnPress = props[@"_hasOnPress"];
+        if (hasOnPress && [hasOnPress boolValue]) {
+            if ([view isKindOfClass:[UIButton class]]) {
+                GoxEventHandler *handler = [[GoxEventHandler alloc] init];
+                handler.viewID = viewID;
+                [(UIButton *)view addTarget:handler
+                                     action:@selector(handleTap)
+                           forControlEvents:UIControlEventTouchUpInside];
+                [goxEventHandlers addObject:handler]; // prevent dealloc
+            }
         }
 
         views[@(viewID)] = view;
@@ -388,6 +450,7 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
 }
 
 - (void)renderWithViewController:(UIViewController *)vc {
+    goxViewController = vc; // save for re-renders
     CGRect screen = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = self.window.safeAreaInsets;
 

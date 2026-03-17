@@ -36,6 +36,9 @@ func ComputeLayout(root *Node, screen ScreenInfo) []LayoutFrame {
 		return nil
 	}
 
+	// Clear previous event callbacks before re-render
+	ClearEvents()
+
 	lc := &layoutComputer{
 		screen: screen,
 		nextID: 0,
@@ -255,6 +258,18 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 				frame.Tag = "_fragment"
 			}
 			frame.Props = lc.collectVisualProps(node)
+
+			// Register event callbacks (onPress, onChange, etc.)
+			if node.Props != nil {
+				if onPress, ok := node.Props["onPress"].(func()); ok {
+					RegisterEvent(i, onPress)
+					// Mark this frame as having an event so bridge can wire it
+					if frame.Props == nil {
+						frame.Props = P{}
+					}
+					frame.Props["_hasOnPress"] = true
+				}
+			}
 		}
 
 		lc.frames = append(lc.frames, frame)
@@ -296,8 +311,22 @@ func (lc *layoutComputer) collectVisualProps(node *Node) P {
 		return nil
 	}
 
-	// Pass through all props — the bridge handles visual ones
-	return node.Props
+	// Filter out non-serializable values (functions) —
+	// json.Marshal fails on func() types.
+	filtered := P{}
+	for k, v := range node.Props {
+		switch v.(type) {
+		case func(), func(string), func(bool), func(float64):
+			// Skip function callbacks — they're stored in eventCallbacks
+			continue
+		default:
+			filtered[k] = v
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // --- Style → Yoga mapping ---

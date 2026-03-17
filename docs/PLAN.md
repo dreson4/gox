@@ -325,10 +325,11 @@ This touches every layer minimally:
 - [x] **Yoga Layout Engine Integration**
   - [x] Vendor facebook/yoga C++ sources (internal/yoga/lib/)
   - [x] Go cgo binding (internal/yoga/yoga.go) — 7 tests
-  - [ ] Layout computer: ComputeLayout(Node, ScreenInfo) → []LayoutFrame
-  - [ ] Update bootstrap: GoxGetLayout() replaces GoxGetTree()
-  - [ ] Rewrite bridge.m: flat frame-based rendering (no UIStackView)
-  - [ ] SafeArea as user-controlled component
+  - [x] Layout computer: ComputeLayout(Node, ScreenInfo) → []LayoutFrame (11 tests)
+  - [x] Update bootstrap: GoxGetLayout() replaces GoxGetTree()
+  - [x] Rewrite bridge.m: flat frame-based rendering (no UIStackView)
+  - [x] SafeArea as user-controlled component
+  - [x] Verified from external project (hellogox): flex rows, images, colored boxes
   - [ ] ScrollView: Yoga content size + native scrolling
 - [ ] Phase 1: Full Compiler (expand parser for all syntax)
 - [ ] Phase 2: Full Runtime (state, props, lifecycle, nav)
