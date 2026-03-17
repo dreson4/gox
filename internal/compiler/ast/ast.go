@@ -8,9 +8,11 @@ import "gox/internal/compiler/token"
 
 // File represents a parsed .gox file.
 type File struct {
-	Package    string      // package name
-	GoSections []GoSection // raw Go code blocks (imports, types, funcs, vars)
-	View       *ViewBlock  // the view { } block, nil if none
+	Package     string      // package name
+	GoSections  []GoSection // raw Go code blocks (imports, types, funcs, vars)
+	View        *ViewBlock  // the view { } block, nil if none
+	IsComponent   bool   // true if file defines a reusable component (has type Props struct)
+	ComponentName string // exported function name, derived from filename (e.g. "Comment" from comment.gox)
 }
 
 // GoSection is a chunk of raw Go source code that passes through unchanged.
@@ -33,11 +35,12 @@ type Node interface {
 
 // Element represents a JSX-like element: <pkg.Name prop={val}>children</pkg.Name>
 type Element struct {
-	Tag      string          // full tag name, e.g. "gox.View", "gox.Text"
-	Props    []Prop          // attributes on the element
-	Children []Node          // child nodes
-	SelfClosing bool         // true for <Foo />
-	Pos      token.Position
+	Tag         string          // full tag name, e.g. "gox.View", "gox.Text"
+	Props       []Prop          // attributes on the element
+	Children    []Node          // child nodes
+	SelfClosing bool            // true for <Foo />
+	SpreadExpr  string          // spread props expression: {...expr} → "expr"
+	Pos         token.Position
 }
 
 func (e *Element) nodeType() string       { return "Element" }

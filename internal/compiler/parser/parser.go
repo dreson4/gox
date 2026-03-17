@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gox/internal/compiler/ast"
 	"gox/internal/compiler/token"
+	"strings"
 )
 
 // Parser builds an AST from a token stream.
@@ -124,7 +125,7 @@ func (p *Parser) parseElement() *ast.Element {
 	}
 
 	elem := &ast.Element{Tag: tag, Pos: pos}
-	elem.Props = p.parseProps()
+	elem.Props, elem.SpreadExpr = p.parseProps()
 
 	// Self-closing?
 	if p.check(token.SlashRAngle) {
@@ -163,11 +164,24 @@ func (p *Parser) parseTagName() string {
 	return name
 }
 
-// parseProps reads prop="val" or prop={expr} pairs until > or />.
-func (p *Parser) parseProps() []ast.Prop {
+// parseProps reads prop="val", prop={expr}, or {...spread} pairs until > or />.
+// Returns props list and optional spread expression.
+func (p *Parser) parseProps() ([]ast.Prop, string) {
 	var props []ast.Prop
+	var spread string
 
 	for !p.atEnd() && !p.check(token.RAngle) && !p.check(token.SlashRAngle) {
+		// Check for spread: {...expr}
+		if p.check(token.ExprStart) {
+			p.advance()
+			expr := p.collectExprContent()
+			p.expect(token.ExprEnd)
+			if strings.HasPrefix(expr, "...") {
+				spread = strings.TrimPrefix(expr, "...")
+			}
+			continue
+		}
+
 		if !p.check(token.Ident) {
 			break
 		}
@@ -184,7 +198,7 @@ func (p *Parser) parseProps() []ast.Prop {
 		}
 		props = append(props, prop)
 	}
-	return props
+	return props, spread
 }
 
 // parsePropValue reads either "string" or {expression}.

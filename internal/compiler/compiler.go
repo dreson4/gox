@@ -6,6 +6,8 @@ import (
 	"gox/internal/compiler/codegen"
 	"gox/internal/compiler/lexer"
 	"gox/internal/compiler/parser"
+	"path/filepath"
+	"strings"
 )
 
 // Result holds the output of a compilation.
@@ -47,6 +49,18 @@ func Compile(src []byte, filename string) Result {
 			})
 		}
 		return Result{Errors: errs}
+	}
+
+	// Detect component files (has type Props struct)
+	for _, section := range file.GoSections {
+		if strings.Contains(section.Code, "type Props struct") {
+			file.IsComponent = true
+			// Derive component name from filename: "comment.gox" → "Comment"
+			base := filepath.Base(filename)
+			name := strings.TrimSuffix(base, filepath.Ext(base))
+			file.ComponentName = strings.ToUpper(name[:1]) + name[1:]
+			break
+		}
 	}
 
 	// Generate

@@ -24,11 +24,21 @@ func New() *Generator {
 // Generate produces Go source code from the AST.
 func (g *Generator) Generate(file *ast.File) string {
 	for _, section := range file.GoSections {
-		g.raw(section.Code)
+		code := section.Code
+		if file.IsComponent {
+			// Rename "type Props struct" → "type {Name}Props struct"
+			// so multiple components in the same package don't conflict
+			code = strings.ReplaceAll(code, "type Props struct", "type "+file.ComponentName+"Props struct")
+		}
+		g.raw(code)
 	}
 
 	if file.View != nil {
-		g.emitViewFunc(file.View)
+		if file.IsComponent {
+			g.emitComponentFunc(file.View, file.ComponentName)
+		} else {
+			g.emitViewFunc(file.View)
+		}
 	}
 
 	return g.buf.String()
@@ -37,6 +47,33 @@ func (g *Generator) Generate(file *ast.File) string {
 func (g *Generator) emitViewFunc(view *ast.ViewBlock) {
 	g.line("")
 	g.line("func render() *gox.Node {")
+	g.indent++
+
+	if len(view.Children) == 1 {
+		g.iwrite("return ")
+		g.emitNode(view.Children[0])
+		g.nl()
+	} else if len(view.Children) > 1 {
+		g.line("return gox.Fragment(")
+		g.indent++
+		for _, child := range view.Children {
+			g.iwrite("")
+			g.emitNode(child)
+			g.raw(",\n")
+		}
+		g.indent--
+		g.line(")")
+	} else {
+		g.line("return nil")
+	}
+
+	g.indent--
+	g.line("}")
+}
+
+func (g *Generator) emitComponentFunc(view *ast.ViewBlock, name string) {
+	g.line("")
+	g.linef("func %s(props %sProps, children ...*gox.Node) *gox.Node {", name, name)
 	g.indent++
 
 	if len(view.Children) == 1 {
@@ -77,6 +114,19 @@ func (g *Generator) emitNode(node ast.Node) {
 }
 
 func (g *Generator) emitElement(elem *ast.Element) {
+	// Special: <gox.Children /> splices passed children into component
+	if elem.Tag == "gox.Children" {
+		g.raw("gox.Fragment(children...)")
+		return
+	}
+
+	// Custom component: <pkg.Component> (cross-package) or <Component> (same-package)
+	if isCustomComponent(elem.Tag) || isSamePackageComponent(elem.Tag) {
+		g.emitCustomComponent(elem)
+		return
+	}
+
+	// Native element: <gox.View>, <gox.Text>, etc.
 	viewName := elemName(elem.Tag)
 	hasProps := len(elem.Props) > 0
 	hasChildren := len(elem.Children) > 0
@@ -108,6 +158,99 @@ func (g *Generator) emitElement(elem *ast.Element) {
 	}
 	g.indent--
 	g.iwrite(")")
+}
+
+// isCustomComponent returns true for non-gox dotted tags like "components.Comment"
+func isCustomComponent(tag string) bool {
+	return strings.Contains(tag, ".") && !strings.HasPrefix(tag, "gox.")
+}
+
+// isSamePackageComponent returns true for uppercase non-dotted tags like "Comment"
+// These are components in the same package, called without a package prefix.
+func isSamePackageComponent(tag string) bool {
+	if strings.Contains(tag, ".") {
+		return false
+	}
+	if len(tag) == 0 {
+		return false
+	}
+	// Uppercase first letter = exported Go function = component
+	return tag[0] >= 'A' && tag[0] <= 'Z'
+}
+
+func (g *Generator) emitCustomComponent(elem *ast.Element) {
+	var pkg, compName string
+	samePackage := !strings.Contains(elem.Tag, ".")
+
+	if samePackage {
+		compName = elem.Tag // e.g. "Comment"
+	} else {
+		parts := strings.SplitN(elem.Tag, ".", 2)
+		pkg = parts[0]
+		compName = parts[1] // e.g. "Comment" from "post.Comment"
+	}
+
+	hasProps := len(elem.Props) > 0
+	hasChildren := len(elem.Children) > 0
+	hasSpread := elem.SpreadExpr != ""
+
+	// Function call: pkg.Comment( or Comment(
+	if samePackage {
+		g.rawf("%s(", compName)
+	} else {
+		g.rawf("%s.%s(", pkg, compName)
+	}
+
+	// Props qualifier: "CommentProps" or "pkg.CommentProps"
+	propsType := compName + "Props"
+	if !samePackage {
+		propsType = pkg + "." + compName + "Props"
+	}
+
+	// Props: spread, explicit, or empty
+	if hasSpread {
+		g.rawf("%s(%s)", propsType, elem.SpreadExpr)
+	} else if hasProps {
+		g.rawf("%s{", propsType)
+		for i, prop := range elem.Props {
+			if i > 0 {
+				g.raw(", ")
+			}
+			g.rawf("%s: ", capitalize(prop.Name))
+			if prop.Value.IsString() {
+				g.rawf("%q", *prop.Value.StringValue)
+			} else if prop.Value.ExprValue != nil {
+				g.raw(*prop.Value.ExprValue)
+			} else {
+				g.raw("true")
+			}
+		}
+		g.raw("}")
+	} else {
+		g.rawf("%s{}", propsType)
+	}
+
+	// Children as variadic args
+	if hasChildren {
+		g.raw(",\n")
+		g.indent++
+		for _, child := range elem.Children {
+			g.iwrite("")
+			g.emitNode(child)
+			g.raw(",\n")
+		}
+		g.indent--
+		g.iwrite(")")
+	} else {
+		g.raw(")")
+	}
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (g *Generator) emitPropsMap(props []ast.Prop) {

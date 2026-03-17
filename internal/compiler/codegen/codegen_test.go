@@ -9,6 +9,11 @@ import (
 
 func generate(t *testing.T, src string) string {
 	t.Helper()
+	return generateWithComponent(t, src, false)
+}
+
+func generateComponent(t *testing.T, src string, componentName string) string {
+	t.Helper()
 	l := lexer.New([]byte(src), "test.gox")
 	tokens := l.Tokenize()
 	p := parser.New(tokens)
@@ -18,6 +23,28 @@ func generate(t *testing.T, src string) string {
 			t.Errorf("parse error: %s", e)
 		}
 		t.FailNow()
+	}
+	file.IsComponent = true
+	file.ComponentName = componentName
+	g := New()
+	return g.Generate(file)
+}
+
+func generateWithComponent(t *testing.T, src string, isComponent bool) string {
+	t.Helper()
+	l := lexer.New([]byte(src), "test.gox")
+	tokens := l.Tokenize()
+	p := parser.New(tokens)
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		for _, e := range errs {
+			t.Errorf("parse error: %s", e)
+		}
+		t.FailNow()
+	}
+	if isComponent {
+		file.IsComponent = true
+		file.ComponentName = "Render" // fallback for old tests
 	}
 	g := New()
 	return g.Generate(file)
@@ -126,6 +153,161 @@ view {
 	}
 	if !strings.Contains(out, "type State struct") {
 		t.Error("State struct should be preserved")
+	}
+}
+
+func TestGenerateComponentRender(t *testing.T) {
+	out := generateComponent(t, `package components
+
+import "gox"
+
+type Props struct {
+    Author string
+    Body   string
+}
+
+view {
+    <gox.View>
+        <gox.Text>{props.Author}</gox.Text>
+        <gox.Text>{props.Body}</gox.Text>
+        <gox.Children />
+    </gox.View>
+}
+`, "Comment")
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "func Comment(props CommentProps, children ...*gox.Node) *gox.Node") {
+		t.Error("missing Comment function signature with CommentProps")
+	}
+	if !strings.Contains(out, "gox.Fragment(children...)") {
+		t.Error("missing gox.Children expansion")
+	}
+	if !strings.Contains(out, "props.Author") {
+		t.Error("missing props.Author reference")
+	}
+	// Should NOT contain render()
+	if strings.Contains(out, "func render()") {
+		t.Error("component should not generate render(), should generate Comment()")
+	}
+}
+
+func TestGenerateCustomComponentUsage(t *testing.T) {
+	out := generate(t, `package main
+
+import (
+    "gox"
+    "myapp/components"
+)
+
+view {
+    <components.Comment author="Alice" body="Great post!">
+        <gox.Text>Reply</gox.Text>
+    </components.Comment>
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "components.Comment(") {
+		t.Error("missing components.Comment call")
+	}
+	if !strings.Contains(out, `components.CommentProps{Author: "Alice", Body: "Great post!"}`) {
+		t.Error("missing props struct literal")
+	}
+	if !strings.Contains(out, `gox.T("Reply")`) {
+		t.Error("missing child text node")
+	}
+	// Should NOT emit gox.E for the component
+	if strings.Contains(out, `gox.E("components.Comment"`) {
+		t.Error("should not emit gox.E for custom component")
+	}
+}
+
+func TestGenerateCustomComponentSelfClosing(t *testing.T) {
+	out := generate(t, `package main
+
+import "myapp/widgets"
+
+view {
+    <widgets.Avatar src="photo.jpg" size={44} />
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "widgets.Avatar(") {
+		t.Error("missing widgets.Avatar call")
+	}
+	if !strings.Contains(out, "widgets.AvatarProps{") {
+		t.Error("missing widgets.AvatarProps type")
+	}
+	if !strings.Contains(out, `Src: "photo.jpg"`) {
+		t.Error("missing Src prop")
+	}
+	if !strings.Contains(out, "Size: 44") {
+		t.Error("missing Size prop")
+	}
+}
+
+func TestGenerateSamePackageComponent(t *testing.T) {
+	out := generate(t, `package post
+
+import "gox"
+
+view {
+    <gox.View>
+        <Avatar src="photo.jpg" size={32} />
+    </gox.View>
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "Avatar(AvatarProps{") {
+		t.Error("missing same-package component call: Avatar(AvatarProps{...})")
+	}
+	if !strings.Contains(out, `Src: "photo.jpg"`) {
+		t.Error("missing Src prop")
+	}
+	// Should NOT have a package prefix
+	if strings.Contains(out, "post.Avatar") {
+		t.Error("should not have package prefix for same-package component")
+	}
+}
+
+func TestGenerateSpreadProps(t *testing.T) {
+	out := generate(t, `package main
+
+import "myapp/comment"
+
+view {
+    <comment.Comment {...c} />
+}
+`)
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "comment.Comment(comment.CommentProps(c))") {
+		t.Error("missing spread props: expected comment.Comment(comment.CommentProps(c))")
+	}
+}
+
+func TestGenerateChildrenElement(t *testing.T) {
+	out := generateComponent(t, `package card
+
+import "gox"
+
+type Props struct {
+    Title string
+}
+
+view {
+    <gox.View>
+        <gox.Text>{props.Title}</gox.Text>
+        <gox.Children />
+    </gox.View>
+}
+`, "Card")
+	t.Log("Generated:\n" + out)
+
+	if !strings.Contains(out, "gox.Fragment(children...)") {
+		t.Error("gox.Children should expand to gox.Fragment(children...)")
 	}
 }
 
