@@ -248,18 +248,21 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
     } else if ([view isKindOfClass:[UIButton class]]) {
         [(UIButton *)view setTitle:text forState:UIControlStateNormal];
 
-        // Apply child text styling to button
-        NSDictionary *style = props[@"style"];
-        if (style) {
-            NSString *color = style[@"Color"];
-            if (color && [color length] > 0) {
-                UIColor *c = parseColor(color);
-                if (c) [(UIButton *)view setTitleColor:c forState:UIControlStateNormal];
-            }
-            NSNumber *fontSize = style[@"FontSize"];
-            if (fontSize && [fontSize doubleValue] > 0) {
-                ((UIButton *)view).titleLabel.font = [UIFont systemFontOfSize:[fontSize doubleValue]];
-            }
+        // Apply button text styling from child Text element
+        NSString *btnColor = props[@"_btnTextColor"];
+        if (btnColor && [btnColor length] > 0) {
+            UIColor *c = parseColor(btnColor);
+            if (c) [(UIButton *)view setTitleColor:c forState:UIControlStateNormal];
+        }
+
+        NSNumber *btnSize = props[@"_btnTextSize"];
+        if (btnSize && [btnSize doubleValue] > 0) {
+            CGFloat size = [btnSize doubleValue];
+            NSString *btnWeight = props[@"_btnTextWeight"];
+            UIFontWeight weight = UIFontWeightRegular;
+            if ([btnWeight isEqualToString:@"bold"] || [btnWeight isEqualToString:@"700"]) weight = UIFontWeightBold;
+            else if ([btnWeight isEqualToString:@"600"]) weight = UIFontWeightSemibold;
+            ((UIButton *)view).titleLabel.font = [UIFont systemFontOfSize:size weight:weight];
         }
     }
 }

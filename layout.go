@@ -247,10 +247,19 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 				// Collect text content from children for Text elements
 				frame.Text = collectTextContent(node)
 			} else if node.Type == NodeElement && node.Tag == "Button" {
-				// Collect button label from child Text elements
+				// Collect button label and text style from child Text elements
 				for _, child := range node.Children {
 					if child.Type == NodeElement && child.Tag == "Text" {
 						frame.Text = collectTextContent(child)
+						// Copy child text styling so bridge can apply to button
+						if childStyle, ok := lc.getStyle(child); ok {
+							if frame.Props == nil {
+								frame.Props = P{}
+							}
+							frame.Props["_btnTextColor"] = childStyle.Color
+							frame.Props["_btnTextSize"] = childStyle.FontSize
+							frame.Props["_btnTextWeight"] = childStyle.FontWeight
+						}
 					}
 				}
 			}
