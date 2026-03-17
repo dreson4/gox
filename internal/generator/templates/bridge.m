@@ -455,6 +455,13 @@ static UIView* buildViewTree(NSDictionary *node) {
 
     applyStyle(stack, style, NO);
 
+    for (NSDictionary *child in children) {
+        UIView *childView = buildViewTree(child);
+        if (childView) {
+            [stack addArrangedSubview:childView];
+        }
+    }
+
     return stack;
 }
 
