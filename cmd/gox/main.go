@@ -399,8 +399,19 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 		}
 	}
 
+	// Collect SDWebImage .m files (iOS vendor dependency)
+	sdwebimageDir := filepath.Join(appSrcDir, "SDWebImage")
+	if sdEntries, err := os.ReadDir(sdwebimageDir); err == nil {
+		for _, e := range sdEntries {
+			if strings.HasSuffix(e.Name(), ".m") {
+				mFiles = append(mFiles, filepath.Join(sdwebimageDir, e.Name()))
+			}
+		}
+	}
+
 	// Compile all .m files + link with libgox.a + libyoga_ios.a
 	clangArgs := []string{
+		"-fobjc-arc",
 		"-isysroot", sdkPath,
 		"-miphonesimulator-version-min=16.0",
 		"-arch", "arm64",
@@ -409,7 +420,12 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 		"-framework", "CoreGraphics",
 		"-framework", "QuartzCore",
 		"-framework", "Security",
+		"-framework", "ImageIO",
+		"-framework", "CoreImage",
+		"-framework", "CoreServices",
+		"-framework", "Accelerate",
 		"-I", iosDir,
+		"-I", sdwebimageDir,
 	}
 	clangArgs = append(clangArgs, mFiles...)
 	clangArgs = append(clangArgs,

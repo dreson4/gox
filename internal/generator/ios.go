@@ -15,6 +15,9 @@ import (
 //go:embed templates/bridge_core.m templates/Info.plist templates/main.m templates/components/*.m
 var templates embed.FS
 
+//go:embed all:templates/ios/vendor/SDWebImage
+var sdwebimageFiles embed.FS
+
 // IOSConfig holds configuration for generating an iOS project.
 type IOSConfig struct {
 	AppName          string
@@ -93,6 +96,27 @@ func GenerateIOS(cfg IOSConfig) error {
 			if err := os.WriteFile(filepath.Join(appDir, entry.Name()), data, 0644); err != nil {
 				return fmt.Errorf("writing component %s: %w", entry.Name(), err)
 			}
+		}
+	}
+
+	// Copy SDWebImage vendor files (iOS-only dependency)
+	sdwebimageDir := filepath.Join(appDir, "SDWebImage")
+	if err := os.MkdirAll(sdwebimageDir, 0755); err != nil {
+		return fmt.Errorf("creating SDWebImage dir: %w", err)
+	}
+
+	sdEntries, err := sdwebimageFiles.ReadDir("templates/ios/vendor/SDWebImage")
+	if err != nil {
+		return fmt.Errorf("reading SDWebImage dir: %w", err)
+	}
+	for _, entry := range sdEntries {
+		name := entry.Name()
+		data, err := sdwebimageFiles.ReadFile("templates/ios/vendor/SDWebImage/" + name)
+		if err != nil {
+			return fmt.Errorf("reading SDWebImage/%s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(sdwebimageDir, name), data, 0644); err != nil {
+			return fmt.Errorf("writing SDWebImage/%s: %w", name, err)
 		}
 	}
 

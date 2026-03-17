@@ -144,62 +144,8 @@ UIColor* goxParseColor(NSString *hex) {
     return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a/255.0];
 }
 
-// --- Image cache ---
-
-static NSCache<NSString*, UIImage*> *goxImageCache(void) {
-    static NSCache<NSString*, UIImage*> *cache = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        cache = [[NSCache alloc] init];
-        cache.countLimit = 100;
-        cache.totalCostLimit = 50 * 1024 * 1024; // 50MB
-    });
-    return cache;
-}
-
-// --- Image loading helper ---
-
-void goxLoadImageAsync(UIImageView *imageView, NSString *src, void (^completion)(BOOL success)) {
-    if (!src || [src length] == 0) {
-        if (completion) completion(NO);
-        return;
-    }
-
-    if ([src hasPrefix:@"http://"] || [src hasPrefix:@"https://"]) {
-        // Check cache first
-        NSCache *cache = goxImageCache();
-        UIImage *cached = [cache objectForKey:src];
-        if (cached) {
-            imageView.image = cached;
-            if (completion) completion(YES);
-            return;
-        }
-
-        // Cache miss — fetch async
-        NSString *srcCopy = [src copy];
-        __unsafe_unretained UIImageView *weakView = imageView;
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            NSURL *url = [NSURL URLWithString:srcCopy];
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            UIImage *image = data ? [UIImage imageWithData:data] : nil;
-
-            if (image) {
-                [cache setObject:image forKey:srcCopy cost:data.length];
-            }
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (weakView && image) {
-                    weakView.image = image;
-                }
-                if (completion) completion(image != nil);
-            });
-        });
-    } else {
-        UIImage *image = [UIImage imageNamed:src];
-        imageView.image = image;
-        if (completion) completion(image != nil);
-    }
-}
+// Image loading is handled by SDWebImage (vendored).
+// See gox_image.m for the component implementation.
 
 // --- View creation by tag (dispatches to component registry) ---
 
