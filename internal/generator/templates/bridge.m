@@ -312,8 +312,10 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
     // Clear old event handlers
     goxEventHandlers = [NSMutableArray new];
     NSMutableDictionary<NSNumber*, UIView*> *views = [NSMutableDictionary new];
+    // Store absolute frames from Yoga — needed for correct relative conversion
+    NSMutableDictionary<NSNumber*, NSValue*> *absFrames = [NSMutableDictionary new];
 
-    // Pass 1: Create all views with frames
+    // Pass 1: Create all views with absolute frames
     for (NSDictionary *frame in frames) {
         int viewID = [frame[@"id"] intValue];
         NSString *tag = frame[@"tag"];
@@ -324,17 +326,20 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         double w = [frame[@"w"] doubleValue];
         double h = [frame[@"h"] doubleValue];
 
+        CGRect absRect = CGRectMake(x, y, w, h);
+        absFrames[@(viewID)] = [NSValue valueWithCGRect:absRect];
+
         // Skip fragments and internal text nodes
         if ([tag isEqualToString:@"_fragment"]) {
             // Fragment: create transparent container
             UIView *container = [[UIView alloc] init];
-            container.frame = CGRectMake(x, y, w, h);
+            container.frame = absRect;
             views[@(viewID)] = container;
             continue;
         }
 
         UIView *view = createViewForTag(tag, props);
-        view.frame = CGRectMake(x, y, w, h);
+        view.frame = absRect;
         applyVisualStyle(view, props);
 
         int pid = [frame[@"pid"] intValue];
@@ -383,7 +388,7 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         }
     }
 
-    // Pass 3: Build view hierarchy
+    // Pass 3: Build view hierarchy using absolute frames for coordinate conversion
     for (NSDictionary *frame in frames) {
         int viewID = [frame[@"id"] intValue];
         int pid = [frame[@"pid"] intValue];
@@ -397,19 +402,18 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
 
         if (pid < 0) {
             // Root view — add directly to view controller
-            // Use absolute frame (already computed by Yoga)
             [vc.view addSubview:view];
         } else {
             UIView *parent = views[@(pid)];
             if (parent) {
-                // Child frame is absolute, convert to relative to parent
-                CGRect childFrame = view.frame;
-                CGRect parentFrame = parent.frame;
+                // Convert absolute → relative using stored absolute positions
+                CGRect childAbs = [absFrames[@(viewID)] CGRectValue];
+                CGRect parentAbs = [absFrames[@(pid)] CGRectValue];
                 view.frame = CGRectMake(
-                    childFrame.origin.x - parentFrame.origin.x,
-                    childFrame.origin.y - parentFrame.origin.y,
-                    childFrame.size.width,
-                    childFrame.size.height
+                    childAbs.origin.x - parentAbs.origin.x,
+                    childAbs.origin.y - parentAbs.origin.y,
+                    childAbs.size.width,
+                    childAbs.size.height
                 );
                 [parent addSubview:view];
 
