@@ -442,6 +442,15 @@ func runIOS() error {
 		return fmt.Errorf("compile: %w", err)
 	}
 
+	// Step 1.5: Ensure go.sum is up to date
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = cwd
+	tidy.Stdout = os.Stdout
+	tidy.Stderr = os.Stderr
+	if err := tidy.Run(); err != nil {
+		return fmt.Errorf("go mod tidy: %w", err)
+	}
+
 	// Step 2: Generate bootstrap
 	perfEnabled := hasFlag("--perf", "-p")
 	fmt.Println("[2/5] Generating bootstrap...")
@@ -493,15 +502,16 @@ func buildGoArchive(projectDir, iosDir string) error {
 	outPath := filepath.Join(iosDir, "libgox.a")
 	sdkPath := iosSimulatorSDK()
 
-	// Find the gox module root (where the yoga lib lives)
+	// Find the gox module root (where the yoga C++ sources live)
 	goxRoot := findGoxRoot(projectDir)
 
-	// Build libyoga.a for iOS simulator (separate from host build)
+	// Build libyoga.a for iOS simulator into iosDir
 	yogaLibDir := filepath.Join(goxRoot, "internal", "yoga", "lib")
 	if err := buildYogaForIOS("", yogaLibDir, sdkPath, iosDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: yoga iOS build: %v\n", err)
 	}
 
+	// Use iosDir for yoga library since that's where we build it
 	cmd := exec.Command("go", "build",
 		"-buildmode=c-archive",
 		"-o", outPath,
@@ -515,7 +525,7 @@ func buildGoArchive(projectDir, iosDir string) error {
 		"CC=clang",
 		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
 		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64 -L%s -lyoga -lc++",
-			sdkPath, yogaLibDir),
+			sdkPath, iosDir),
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -532,7 +542,7 @@ func buildYogaForIOS(yogaSrcDir, yogaLibDir, sdkPath, iosDir string) error {
 	}
 
 	// Check if iOS yoga lib already exists
-	iosYogaLib := filepath.Join(iosDir, "libyoga_ios.a")
+	iosYogaLib := filepath.Join(iosDir, "libyoga.a")
 	if _, err := os.Stat(iosYogaLib); err == nil {
 		return nil // already built
 	}
@@ -653,7 +663,7 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 		}
 	}
 
-	// Compile all .m files + link with libgox.a + libyoga_ios.a
+	// Compile all .m files + link with libgox.a + libyoga.a
 	clangArgs := []string{
 		"-fobjc-arc",
 		"-isysroot", sdkPath,
@@ -674,7 +684,7 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 	clangArgs = append(clangArgs, mFiles...)
 	clangArgs = append(clangArgs,
 		filepath.Join(iosDir, "libgox.a"),
-		filepath.Join(iosDir, "libyoga_ios.a"),
+		filepath.Join(iosDir, "libyoga.a"),
 		"-lc++",
 		"-lresolv",
 		"-o", filepath.Join(appDir, appName),
