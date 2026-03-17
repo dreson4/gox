@@ -11,6 +11,8 @@
 // No UIStackView. No Auto Layout. All layout is computed by Yoga in Go.
 
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
+#import <mach/mach.h>
 
 // Exported from the Go static library
 extern const char* GoxGetLayout(double w, double h, double safeT, double safeR, double safeB, double safeL);
@@ -302,6 +304,172 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
     }
 }
 
+// --- Performance monitor overlay ---
+
+static double goxLastGoMs = 0;
+static double goxLastBridgeMs = 0;
+static int goxLastChangedFrames = 0;
+static int goxLastTotalFrames = 0;
+
+static double getMemoryMB(void) {
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
+        return info.resident_size / (1024.0 * 1024.0);
+    }
+    return 0;
+}
+
+// Parse JSON response — detects bare array (no perf) vs wrapped object (with perf).
+// Returns the frames array and optionally extracts perf data.
+static NSArray* parseGoxResponse(NSData *data, NSDictionary **outPerf) {
+    NSError *error = nil;
+    id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+    if (error || !parsed) return nil;
+
+    if ([parsed isKindOfClass:[NSArray class]]) {
+        if (outPerf) *outPerf = nil;
+        return parsed;
+    }
+    if ([parsed isKindOfClass:[NSDictionary class]]) {
+        if (outPerf) *outPerf = parsed[@"perf"];
+        NSArray *frames = parsed[@"frames"];
+        if ([frames isKindOfClass:[NSArray class]]) return frames;
+    }
+    return nil;
+}
+
+@interface GoxPerfOverlay : NSObject
+@property (nonatomic, strong) UIWindow *overlayWindow;
+@property (nonatomic, strong) UILabel *line1;
+@property (nonatomic, strong) UILabel *line2;
+@property (nonatomic, strong) UILabel *line3;
+@property (nonatomic, strong) CADisplayLink *displayLink;
+@property (nonatomic, assign) CFTimeInterval lastTimestamp;
+@property (nonatomic, assign) int frameCount;
++ (instancetype)shared;
+- (void)show;
+- (void)hide;
+- (void)tick:(CADisplayLink *)link;
+@end
+
+static GoxPerfOverlay *goxPerfOverlay = nil;
+
+@implementation GoxPerfOverlay
+
++ (instancetype)shared {
+    if (!goxPerfOverlay) {
+        goxPerfOverlay = [[GoxPerfOverlay alloc] init];
+    }
+    return goxPerfOverlay;
+}
+
+- (void)show {
+    if (self.overlayWindow) return;
+
+    CGFloat w = 230, h = 58;
+    UIEdgeInsets safe = UIEdgeInsetsZero;
+    for (UIWindowScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            safe = scene.windows.firstObject.safeAreaInsets;
+            break;
+        }
+    }
+
+    self.overlayWindow = [[UIWindow alloc] initWithFrame:CGRectMake(8, safe.top + 4, w, h)];
+    self.overlayWindow.windowLevel = UIWindowLevelStatusBar + 100;
+    self.overlayWindow.backgroundColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:0.82];
+    self.overlayWindow.layer.cornerRadius = 8;
+    self.overlayWindow.clipsToBounds = YES;
+    self.overlayWindow.hidden = NO;
+
+    // Make draggable
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(handleDrag:)];
+    [self.overlayWindow addGestureRecognizer:pan];
+
+    UIFont *font = [UIFont monospacedSystemFontOfSize:10.5 weight:UIFontWeightMedium];
+    UIColor *green = [UIColor colorWithRed:0.3 green:1.0 blue:0.3 alpha:1.0];
+
+    self.line1 = [self makeLabelWithFont:font color:green y:4];
+    self.line2 = [self makeLabelWithFont:font color:green y:22];
+    self.line3 = [self makeLabelWithFont:font color:green y:38];
+
+    self.line1.text = @" FPS: --";
+    self.line2.text = @" Go: --   Bridge: --";
+    self.line3.text = @" Mem: --   Views: --";
+
+    self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+    [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    self.lastTimestamp = 0;
+    self.frameCount = 0;
+}
+
+- (void)hide {
+    [self.displayLink invalidate];
+    self.displayLink = nil;
+    self.overlayWindow.hidden = YES;
+    self.overlayWindow = nil;
+}
+
+- (UILabel *)makeLabelWithFont:(UIFont *)font color:(UIColor *)color y:(CGFloat)y {
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, y, 230, 16)];
+    label.font = font;
+    label.textColor = color;
+    label.backgroundColor = [UIColor clearColor];
+    [self.overlayWindow addSubview:label];
+    return label;
+}
+
+- (void)handleDrag:(UIPanGestureRecognizer *)pan {
+    if (pan.state != UIGestureRecognizerStateChanged) return;
+
+    CGPoint translation = [pan translationInView:self.overlayWindow];
+    CGRect frame = self.overlayWindow.frame;
+    frame.origin.x += translation.x;
+    frame.origin.y += translation.y;
+
+    // Clamp to screen bounds
+    CGRect screen = [UIScreen mainScreen].bounds;
+    if (frame.origin.x < 0) frame.origin.x = 0;
+    if (frame.origin.y < 0) frame.origin.y = 0;
+    if (CGRectGetMaxX(frame) > screen.size.width)
+        frame.origin.x = screen.size.width - frame.size.width;
+    if (CGRectGetMaxY(frame) > screen.size.height)
+        frame.origin.y = screen.size.height - frame.size.height;
+
+    self.overlayWindow.frame = frame;
+    [pan setTranslation:CGPointZero inView:self.overlayWindow];
+}
+
+- (void)tick:(CADisplayLink *)link {
+    self.frameCount++;
+
+    CFTimeInterval now = CACurrentMediaTime();
+    if (self.lastTimestamp == 0) {
+        self.lastTimestamp = now;
+        return;
+    }
+
+    CFTimeInterval elapsed = now - self.lastTimestamp;
+    if (elapsed >= 0.5) {
+        double fps = self.frameCount / elapsed;
+        self.frameCount = 0;
+        self.lastTimestamp = now;
+
+        int viewCount = goxActiveContext ? (int)[goxActiveContext.views count] : 0;
+
+        self.line1.text = [NSString stringWithFormat:@" FPS: %.0f    Frames: %d/%d",
+                           fps, goxLastChangedFrames, goxLastTotalFrames];
+        self.line2.text = [NSString stringWithFormat:@" Go: %.1fms   Bridge: %.1fms",
+                           goxLastGoMs, goxLastBridgeMs];
+        self.line3.text = [NSString stringWithFormat:@" Mem: %.1f MB   Views: %d",
+                           getMemoryMB(), viewCount];
+    }
+}
+
+@end
+
 // --- Event handling ---
 
 @interface GoxEventHandler : NSObject
@@ -321,10 +489,22 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
             NSData *data = [NSData dataWithBytes:json length:strlen(json)];
             GoxFreeString(json);
 
-            NSError *error = nil;
-            NSArray *frames = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-            if (frames && !error) {
+            NSDictionary *perfData = nil;
+            NSArray *frames = parseGoxResponse(data, &perfData);
+            if (frames) {
+                // Extract Go timing if perf is enabled
+                if (perfData) {
+                    double renderNs = [perfData[@"renderNs"] doubleValue];
+                    double layoutNs = [perfData[@"layoutNs"] doubleValue];
+                    double marshalNs = [perfData[@"marshalNs"] doubleValue];
+                    goxLastGoMs = (renderNs + layoutNs + marshalNs) / 1e6;
+                    goxLastTotalFrames = [perfData[@"frameCount"] intValue];
+                }
+
+                CFTimeInterval bridgeStart = CACurrentMediaTime();
                 updateUI(goxViewController, goxActiveContext, frames);
+                goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+
                 NSLog(@"GOX_INTERNAL: Updated %lu frames", (unsigned long)[frames count]);
             }
         }
@@ -467,6 +647,8 @@ static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames
 // --- Diff-based update: only changes what's different ---
 
 static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFrames) {
+    int changedCount = 0;
+
     // Build ID set for deletion detection
     NSMutableSet<NSNumber*> *newIDSet = [NSMutableSet new];
     for (NSDictionary *f in newFrames) {
@@ -530,6 +712,7 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
             // Tag changed at same ID (structural change) → recreate
             NSString *oldTag = oldFrame[@"tag"];
             if (![tag isEqualToString:oldTag]) {
+                changedCount++;
                 [existing removeFromSuperview];
                 existing = createViewForTag(tag, props);
                 ctx.views[viewID] = existing;
@@ -540,6 +723,7 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
                     setTextContent(existing, text, props);
                 }
             } else if (!hashMatch) {
+                changedCount++;
                 // Hash differs — something changed, update style/text
                 applyVisualStyle(existing, props);
 
@@ -563,6 +747,7 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
             // else: hash matches — frame unchanged, skip all visual updates
         } else {
             // --- Create new view ---
+            changedCount++;
             if ([tag isEqualToString:@"_fragment"]) {
                 UIView *container = [[UIView alloc] init];
                 container.frame = absRect;
@@ -649,6 +834,9 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
         }
     }
 
+    // Update perf counters
+    goxLastChangedFrames = changedCount;
+
     // Save new frame data for next diff
     [ctx.framesByID removeAllObjects];
     for (NSDictionary *frame in newFrames) {
@@ -707,16 +895,34 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
     NSData *data = [NSData dataWithBytes:json length:strlen(json)];
     GoxFreeString(json);
 
-    NSError *error = nil;
-    NSArray *frames = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+    NSDictionary *perfData = nil;
+    NSArray *frames = parseGoxResponse(data, &perfData);
 
-    if (error || ![frames isKindOfClass:[NSArray class]]) {
-        NSLog(@"GOX_INTERNAL: JSON parse error: %@", error);
+    if (!frames) {
+        NSLog(@"GOX_INTERNAL: JSON parse error");
         return;
     }
 
+    // Extract Go timing if perf is enabled
+    if (perfData) {
+        double renderNs = [perfData[@"renderNs"] doubleValue];
+        double layoutNs = [perfData[@"layoutNs"] doubleValue];
+        double marshalNs = [perfData[@"marshalNs"] doubleValue];
+        goxLastGoMs = (renderNs + layoutNs + marshalNs) / 1e6;
+        goxLastTotalFrames = [perfData[@"frameCount"] intValue];
+        goxLastChangedFrames = goxLastTotalFrames; // initial render = all frames
+    }
+
     NSLog(@"GOX_INTERNAL: Building UI from %lu frames", (unsigned long)[frames count]);
+
+    CFTimeInterval bridgeStart = CACurrentMediaTime();
     buildUI(vc, goxActiveContext, frames);
+    goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+
+    // Show perf overlay if perf data was present
+    if (perfData) {
+        [[GoxPerfOverlay shared] show];
+    }
 }
 
 @end

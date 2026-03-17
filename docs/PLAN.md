@@ -331,6 +331,15 @@ This touches every layer minimally:
   - [x] SafeArea as user-controlled component
   - [x] Verified from external project (hellogox): flex rows, images, colored boxes
   - [ ] ScrollView: Yoga content size + native scrolling
+- [x] **Diff-Based Re-Render**
+  - [x] GoxRenderContext: per-VC state for views, frames, event handlers
+  - [x] updateUI(): hash-based diff — skip unchanged frames (FNV-1a)
+  - [x] Images preserved when src unchanged, no re-download on state change
+  - [x] Consolidated from 4 passes to 3
+- [x] **Logging & DX**
+  - [x] slog → NSLog bridge (log.go + log_nslog.m) — slog.Info() works on iOS
+  - [x] `gox run ios --logs` streams user logs to terminal
+  - [x] UIButtonTypeCustom for instant tap response (no system fade)
 - [ ] Phase 1: Full Compiler (expand parser for all syntax)
 - [ ] Phase 2: Full Runtime (state, props, lifecycle, nav)
 - [ ] Phase 3: Platform Bridge — add views one by one

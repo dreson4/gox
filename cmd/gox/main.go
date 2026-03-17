@@ -58,6 +58,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "run flags:")
 	fmt.Fprintln(os.Stderr, "  --device, -d              Pick simulator device interactively")
 	fmt.Fprintln(os.Stderr, "  --logs, -l                Stream app logs after launch (Ctrl+C to stop)")
+	fmt.Fprintln(os.Stderr, "  --perf, -p                Show performance monitor overlay")
 }
 
 // --- compile ---
@@ -204,8 +205,9 @@ func runIOS() error {
 	}
 
 	// Step 2: Generate bootstrap
+	perfEnabled := hasFlag("--perf", "-p")
 	fmt.Println("[2/5] Generating bootstrap...")
-	if err := generator.GenerateBootstrap(cwd); err != nil {
+	if err := generator.GenerateBootstrap(cwd, perfEnabled); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 
@@ -392,6 +394,7 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 		"-framework", "UIKit",
 		"-framework", "Foundation",
 		"-framework", "CoreGraphics",
+		"-framework", "QuartzCore",
 		"-framework", "Security",
 		"-I", iosDir,
 		filepath.Join(iosDir, appName, "bridge.m"),
