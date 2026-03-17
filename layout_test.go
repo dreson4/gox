@@ -582,3 +582,46 @@ func TestLayoutParentIDs(t *testing.T) {
 		t.Errorf("inner view parentID expected 0, got %d", frames[1].ParentID)
 	}
 }
+
+func TestLayoutFrameHashing(t *testing.T) {
+	tree := E("View", P{"style": Style{Width: 200, Height: 200, BackgroundColor: "#FF0000"}},
+		E("Text", P{"style": Style{FontSize: 16}}, T("Hello")),
+	)
+
+	// Compute layout twice with same tree — hashes should match
+	frames1 := ComputeLayout(tree, testScreen)
+	frames2 := ComputeLayout(tree, testScreen)
+
+	if len(frames1) != len(frames2) {
+		t.Fatalf("frame count mismatch: %d vs %d", len(frames1), len(frames2))
+	}
+
+	for i := range frames1 {
+		if frames1[i].Hash == "" {
+			t.Errorf("frame %d has empty hash", i)
+		}
+		if frames1[i].Hash != frames2[i].Hash {
+			t.Errorf("frame %d hash mismatch across identical renders: %s vs %s",
+				i, frames1[i].Hash, frames2[i].Hash)
+		}
+	}
+
+	// Change the text — hash should differ for that frame
+	tree2 := E("View", P{"style": Style{Width: 200, Height: 200, BackgroundColor: "#FF0000"}},
+		E("Text", P{"style": Style{FontSize: 16}}, T("World")),
+	)
+
+	frames3 := ComputeLayout(tree2, testScreen)
+
+	// Root frame unchanged (same style, same position)
+	if frames1[0].Hash != frames3[0].Hash {
+		t.Errorf("root hash should match: %s vs %s", frames1[0].Hash, frames3[0].Hash)
+	}
+
+	// Text frame should differ
+	text1 := findFrame(frames1, "Text")
+	text3 := findFrame(frames3, "Text")
+	if text1.Hash == text3.Hash {
+		t.Error("text frame hash should differ after content change")
+	}
+}

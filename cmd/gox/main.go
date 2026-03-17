@@ -53,7 +53,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "commands:")
 	fmt.Fprintln(os.Stderr, "  compile <file.gox|dir>    Compile .gox files to .go")
 	fmt.Fprintln(os.Stderr, "  generate ios              Generate iOS native project")
-	fmt.Fprintln(os.Stderr, "  run ios [--device]        Build and run on iOS simulator")
+	fmt.Fprintln(os.Stderr, "  run ios [flags]           Build and run on iOS simulator")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "run flags:")
+	fmt.Fprintln(os.Stderr, "  --device, -d              Pick simulator device interactively")
+	fmt.Fprintln(os.Stderr, "  --logs, -l                Stream app logs after launch (Ctrl+C to stop)")
 }
 
 // --- compile ---
@@ -222,7 +226,8 @@ func runIOS() error {
 
 	// Step 5: Build native app, install, launch
 	fmt.Println("[5/5] Building and launching...")
-	return buildAndLaunch(cwd, iosDir, appName, device)
+	streamLogs := hasFlag("--logs", "-l")
+	return buildAndLaunch(cwd, iosDir, appName, device, streamLogs)
 }
 
 func compileAllGox(dir string) error {
@@ -364,7 +369,7 @@ func findGoxRoot(projectDir string) string {
 	return projectDir
 }
 
-func buildAndLaunch(projectDir, iosDir, appName string, device simDevice) error {
+func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, streamLogs bool) error {
 	sdkPath := iosSimulatorSDK()
 	bundleID := "com.gox." + strings.ToLower(appName)
 
@@ -431,7 +436,42 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice) error 
 	launch := exec.Command("xcrun", "simctl", "launch", device.UDID, bundleID)
 	launch.Stdout = os.Stdout
 	launch.Stderr = os.Stderr
-	return launch.Run()
+	if err := launch.Run(); err != nil {
+		return err
+	}
+
+	if !streamLogs {
+		return nil
+	}
+
+	// Stream logs — filter to our process, show GOX: prefixed lines
+	fmt.Println("  Streaming logs (Ctrl+C to stop)...")
+	logCmd := exec.Command("xcrun", "simctl", "spawn", device.UDID,
+		"log", "stream",
+		"--predicate", fmt.Sprintf("process == \"%s\"", appName),
+		"--style", "compact",
+	)
+
+	stdout, err := logCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("log stream: %w", err)
+	}
+	logCmd.Stderr = os.Stderr
+
+	if err := logCmd.Start(); err != nil {
+		return fmt.Errorf("log stream start: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Only show user logs (slog output), not internal bridge debug logs
+		if idx := strings.Index(line, "GOX_LOG: "); idx != -1 {
+			fmt.Println(line[idx+9:])
+		}
+	}
+
+	return logCmd.Wait()
 }
 
 // --- Simulator device management ---

@@ -6,6 +6,7 @@
 //   2. Calls GoxGetLayout() (exported from Go) with screen info
 //   3. Go runs Yoga layout engine, returns flat array of positioned frames
 //   4. This code creates UIKit views and positions them with view.frame
+//   5. Re-renders diff against previous frames — only updates what changed
 //
 // No UIStackView. No Auto Layout. All layout is computed by Yoga in Go.
 
@@ -17,10 +18,43 @@ extern void GoxHandleEvent(int viewID);
 extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
 
-// Forward declaration
-static void buildUI(UIViewController *vc, NSArray *frames);
+// --- Render context: per-screen state for diffing ---
+// Each VC gets its own context. When the VC is deallocated (screen popped),
+// all tracked views and state are released automatically via ARC.
 
-// Global VC reference for re-renders
+@interface GoxRenderContext : NSObject
+@property (nonatomic, strong) NSMutableDictionary<NSNumber*, UIView*> *views;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber*, NSDictionary*> *framesByID;
+@property (nonatomic, strong) NSMutableArray *eventHandlers;
+@end
+
+@implementation GoxRenderContext
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _views = [NSMutableDictionary new];
+        _framesByID = [NSMutableDictionary new];
+        _eventHandlers = [NSMutableArray new];
+    }
+    return self;
+}
+
+- (void)clear {
+    for (UIView *v in [_views allValues]) {
+        [v removeFromSuperview];
+    }
+    [_views removeAllObjects];
+    [_framesByID removeAllObjects];
+    [_eventHandlers removeAllObjects];
+}
+@end
+
+// Forward declarations
+static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames);
+static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames);
+
+// Active render context (one per screen; navigation will scope these per-VC)
+static GoxRenderContext *goxActiveContext = nil;
 static UIViewController *goxViewController = nil;
 
 // --- Color parsing ---
@@ -60,6 +94,26 @@ static UIColor* parseColor(NSString *hex) {
     return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a/255.0];
 }
 
+// --- Image loading helper ---
+
+static void loadImageAsync(UIImageView *imageView, NSString *src) {
+    if (!src || [src length] == 0) return;
+    if ([src hasPrefix:@"http://"] || [src hasPrefix:@"https://"]) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSURL *url = [NSURL URLWithString:src];
+            NSData *data = [NSData dataWithContentsOfURL:url];
+            if (data) {
+                UIImage *image = [UIImage imageWithData:data];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    imageView.image = image;
+                });
+            }
+        });
+    } else {
+        imageView.image = [UIImage imageNamed:src];
+    }
+}
+
 // --- View creation by tag ---
 
 static UIView* createViewForTag(NSString *tag, NSDictionary *props) {
@@ -70,14 +124,13 @@ static UIView* createViewForTag(NSString *tag, NSDictionary *props) {
     }
 
     if ([tag isEqualToString:@"_text"]) {
-        // Raw text node — shouldn't appear as a top-level view normally
         UILabel *label = [[UILabel alloc] init];
         label.numberOfLines = 0;
         return label;
     }
 
     if ([tag isEqualToString:@"Button"]) {
-        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
         return button;
     }
 
@@ -113,25 +166,7 @@ static UIView* createViewForTag(NSString *tag, NSDictionary *props) {
         else if ([contentMode isEqualToString:@"stretch"]) imageView.contentMode = UIViewContentModeScaleToFill;
         else if ([contentMode isEqualToString:@"center"]) imageView.contentMode = UIViewContentModeCenter;
 
-        // Async image loading
-        NSString *src = props[@"src"];
-        if (src && [src length] > 0) {
-            if ([src hasPrefix:@"http://"] || [src hasPrefix:@"https://"]) {
-                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                    NSURL *url = [NSURL URLWithString:src];
-                    NSData *data = [NSData dataWithContentsOfURL:url];
-                    if (data) {
-                        UIImage *image = [UIImage imageWithData:data];
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            imageView.image = image;
-                        });
-                    }
-                });
-            } else {
-                imageView.image = [UIImage imageNamed:src];
-            }
-        }
-
+        loadImageAsync(imageView, props[@"src"]);
         return imageView;
     }
 
@@ -149,7 +184,7 @@ static UIView* createViewForTag(NSString *tag, NSDictionary *props) {
         return scrollView;
     }
 
-    // Default: plain UIView (View, SafeArea, Row, Column, Fragment, etc.)
+    // Default: plain UIView (View, SafeArea, Fragment, etc.)
     UIView *v = [[UIView alloc] init];
     v.clipsToBounds = YES;
     return v;
@@ -269,7 +304,6 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
 
 // --- Event handling ---
 
-// Helper to handle button taps — stores the view ID and calls Go
 @interface GoxEventHandler : NSObject
 @property (nonatomic, assign) int viewID;
 - (void)handleTap;
@@ -277,11 +311,11 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
 
 @implementation GoxEventHandler
 - (void)handleTap {
-    NSLog(@"GOX: Button tapped, viewID=%d", self.viewID);
+    NSLog(@"GOX_INTERNAL: Button tapped, viewID=%d", self.viewID);
     GoxHandleEvent(self.viewID);
 
-    // Re-render: get new layout from Go and rebuild UI
-    if (goxViewController) {
+    // Re-render: get new layout from Go and diff-update
+    if (goxViewController && goxActiveContext) {
         const char *json = GoxRerender();
         if (json) {
             NSData *data = [NSData dataWithBytes:json length:strlen(json)];
@@ -290,29 +324,37 @@ static void setTextContent(UIView *view, NSString *text, NSDictionary *props) {
             NSError *error = nil;
             NSArray *frames = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
             if (frames && !error) {
-                // Remove all existing subviews
-                for (UIView *sub in [goxViewController.view.subviews copy]) {
-                    [sub removeFromSuperview];
-                }
-                // Rebuild with new frames
-                buildUI(goxViewController, frames);
-                NSLog(@"GOX: Re-rendered with %lu frames", (unsigned long)[frames count]);
+                updateUI(goxViewController, goxActiveContext, frames);
+                NSLog(@"GOX_INTERNAL: Updated %lu frames", (unsigned long)[frames count]);
             }
         }
     }
 }
 @end
 
-// Keep event handlers alive
-static NSMutableArray *goxEventHandlers = nil;
+// --- Wire event handler onto a button ---
 
-// --- Build UI from flat layout frames ---
+static void wireOnPress(UIView *view, int viewID, GoxRenderContext *ctx) {
+    if (![view isKindOfClass:[UIButton class]]) return;
 
-static void buildUI(UIViewController *vc, NSArray *frames) {
-    // Clear old event handlers
-    goxEventHandlers = [NSMutableArray new];
-    NSMutableDictionary<NSNumber*, UIView*> *views = [NSMutableDictionary new];
-    // Store absolute frames from Yoga — needed for correct relative conversion
+    // Remove old targets to avoid duplicates on re-render
+    [(UIButton *)view removeTarget:nil
+                            action:NULL
+                  forControlEvents:UIControlEventTouchUpInside];
+
+    GoxEventHandler *handler = [[GoxEventHandler alloc] init];
+    handler.viewID = viewID;
+    [(UIButton *)view addTarget:handler
+                         action:@selector(handleTap)
+               forControlEvents:UIControlEventTouchUpInside];
+    [ctx.eventHandlers addObject:handler];
+}
+
+// --- Initial build: creates all views from scratch ---
+
+static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames) {
+    [ctx clear];
+
     NSMutableDictionary<NSNumber*, NSValue*> *absFrames = [NSMutableDictionary new];
 
     // Pass 1: Create all views with absolute frames
@@ -329,12 +371,12 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         CGRect absRect = CGRectMake(x, y, w, h);
         absFrames[@(viewID)] = [NSValue valueWithCGRect:absRect];
 
-        // Skip fragments and internal text nodes
+        if ([tag isEqualToString:@"_text"]) continue;
+
         if ([tag isEqualToString:@"_fragment"]) {
-            // Fragment: create transparent container
             UIView *container = [[UIView alloc] init];
             container.frame = absRect;
-            views[@(viewID)] = container;
+            ctx.views[@(viewID)] = container;
             continue;
         }
 
@@ -342,32 +384,20 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         view.frame = absRect;
         applyVisualStyle(view, props);
 
-        int pid = [frame[@"pid"] intValue];
-        NSLog(@"GOX frame: id=%d tag=%@ pid=%d (%.0f,%.0f,%.0f,%.0f)", viewID, tag, pid, x, y, w, h);
-
-        // Handle text content
         NSString *text = frame[@"text"];
         if (text && [text length] > 0) {
             setTextContent(view, text, props);
         }
 
-        // Wire up onPress events for buttons
         NSNumber *hasOnPress = props[@"_hasOnPress"];
         if (hasOnPress && [hasOnPress boolValue]) {
-            if ([view isKindOfClass:[UIButton class]]) {
-                GoxEventHandler *handler = [[GoxEventHandler alloc] init];
-                handler.viewID = viewID;
-                [(UIButton *)view addTarget:handler
-                                     action:@selector(handleTap)
-                           forControlEvents:UIControlEventTouchUpInside];
-                [goxEventHandlers addObject:handler]; // prevent dealloc
-            }
+            wireOnPress(view, viewID, ctx);
         }
 
-        views[@(viewID)] = view;
+        ctx.views[@(viewID)] = view;
     }
 
-    // Pass 2: Collect text from _text children into parent Text/Button views
+    // Pass 2: Merge _text children into parent Text/Button views
     for (NSDictionary *frame in frames) {
         NSString *tag = frame[@"tag"];
         if (![tag isEqualToString:@"_text"]) continue;
@@ -376,9 +406,8 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         NSString *text = frame[@"text"];
         if (!text || pid < 0) continue;
 
-        UIView *parent = views[@(pid)];
+        UIView *parent = ctx.views[@(pid)];
         if (parent) {
-            // Find the parent frame to get its props for styling
             for (NSDictionary *pf in frames) {
                 if ([pf[@"id"] intValue] == pid) {
                     setTextContent(parent, text, pf[@"props"]);
@@ -394,19 +423,16 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         int pid = [frame[@"pid"] intValue];
         NSString *tag = frame[@"tag"];
 
-        // Skip _text nodes — they're content, not views
         if ([tag isEqualToString:@"_text"]) continue;
 
-        UIView *view = views[@(viewID)];
+        UIView *view = ctx.views[@(viewID)];
         if (!view) continue;
 
         if (pid < 0) {
-            // Root view — add directly to view controller
             [vc.view addSubview:view];
         } else {
-            UIView *parent = views[@(pid)];
+            UIView *parent = ctx.views[@(pid)];
             if (parent) {
-                // Convert absolute → relative using stored absolute positions
                 CGRect childAbs = [absFrames[@(viewID)] CGRectValue];
                 CGRect parentAbs = [absFrames[@(pid)] CGRectValue];
                 view.frame = CGRectMake(
@@ -417,7 +443,6 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
                 );
                 [parent addSubview:view];
 
-                // For ScrollView parents, update content size
                 if ([parent isKindOfClass:[UIScrollView class]]) {
                     UIScrollView *sv = (UIScrollView *)parent;
                     CGFloat maxY = CGRectGetMaxY(view.frame);
@@ -431,6 +456,203 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
                 }
             }
         }
+    }
+
+    // Save frame data for future diffs
+    for (NSDictionary *frame in frames) {
+        ctx.framesByID[frame[@"id"]] = frame;
+    }
+}
+
+// --- Diff-based update: only changes what's different ---
+
+static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFrames) {
+    // Build ID set for deletion detection
+    NSMutableSet<NSNumber*> *newIDSet = [NSMutableSet new];
+    for (NSDictionary *f in newFrames) {
+        [newIDSet addObject:f[@"id"]];
+    }
+
+    // Reset event handlers (Go clears callbacks each render)
+    ctx.eventHandlers = [NSMutableArray new];
+
+    // Absolute frames for coordinate conversion
+    NSMutableDictionary<NSNumber*, NSValue*> *absFrames = [NSMutableDictionary new];
+
+    // Index new frames by parent for _text merging
+    NSMutableDictionary<NSNumber*, NSDictionary*> *newFrameByID = [NSMutableDictionary new];
+    for (NSDictionary *f in newFrames) {
+        newFrameByID[f[@"id"]] = f;
+    }
+
+    // Pass 1: Update/create views + merge _text in one pass
+    for (NSDictionary *frame in newFrames) {
+        NSNumber *viewID = frame[@"id"];
+        NSString *tag = frame[@"tag"];
+        NSDictionary *props = frame[@"props"];
+
+        double x = [frame[@"x"] doubleValue];
+        double y = [frame[@"y"] doubleValue];
+        double w = [frame[@"w"] doubleValue];
+        double h = [frame[@"h"] doubleValue];
+        CGRect absRect = CGRectMake(x, y, w, h);
+        absFrames[viewID] = [NSValue valueWithCGRect:absRect];
+
+        // Handle _text nodes: merge into parent if changed
+        if ([tag isEqualToString:@"_text"]) {
+            int pid = [frame[@"pid"] intValue];
+            NSString *text = frame[@"text"];
+            if (!text || pid < 0) continue;
+
+            NSDictionary *oldFrame = ctx.framesByID[viewID];
+            NSString *oldText = oldFrame[@"text"];
+            if (![text isEqual:oldText]) {
+                UIView *parent = ctx.views[@(pid)];
+                if (parent) {
+                    NSDictionary *pf = newFrameByID[@(pid)];
+                    if (pf) setTextContent(parent, text, pf[@"props"]);
+                }
+            }
+            continue;
+        }
+
+        UIView *existing = ctx.views[viewID];
+        NSDictionary *oldFrame = ctx.framesByID[viewID];
+
+        if (existing && oldFrame) {
+            // --- Update existing view ---
+
+            // Hash comparison: skip expensive work if frame is unchanged
+            NSString *newHash = frame[@"hash"];
+            NSString *oldHash = oldFrame[@"hash"];
+            BOOL hashMatch = (newHash && oldHash && [newHash isEqualToString:oldHash]);
+
+            // Tag changed at same ID (structural change) → recreate
+            NSString *oldTag = oldFrame[@"tag"];
+            if (![tag isEqualToString:oldTag]) {
+                [existing removeFromSuperview];
+                existing = createViewForTag(tag, props);
+                ctx.views[viewID] = existing;
+                existing.frame = absRect;
+                applyVisualStyle(existing, props);
+                NSString *text = frame[@"text"];
+                if (text && [text length] > 0) {
+                    setTextContent(existing, text, props);
+                }
+            } else if (!hashMatch) {
+                // Hash differs — something changed, update style/text
+                applyVisualStyle(existing, props);
+
+                // Image: only reload if src changed
+                if ([tag isEqualToString:@"Image"] && [existing isKindOfClass:[UIImageView class]]) {
+                    NSDictionary *oldProps = oldFrame[@"props"];
+                    NSString *newSrc = props[@"src"];
+                    NSString *oldSrc = oldProps[@"src"];
+                    if (![newSrc isEqual:oldSrc]) {
+                        loadImageAsync((UIImageView *)existing, newSrc);
+                    }
+                }
+
+                // Update text if changed
+                NSString *newText = frame[@"text"];
+                NSString *oldText = oldFrame[@"text"];
+                if (newText && ![newText isEqual:oldText]) {
+                    setTextContent(existing, newText, props);
+                }
+            }
+            // else: hash matches — frame unchanged, skip all visual updates
+        } else {
+            // --- Create new view ---
+            if ([tag isEqualToString:@"_fragment"]) {
+                UIView *container = [[UIView alloc] init];
+                container.frame = absRect;
+                ctx.views[viewID] = container;
+            } else {
+                UIView *view = createViewForTag(tag, props);
+                view.frame = absRect;
+                applyVisualStyle(view, props);
+                NSString *text = frame[@"text"];
+                if (text && [text length] > 0) {
+                    setTextContent(view, text, props);
+                }
+                ctx.views[viewID] = view;
+                existing = view;
+            }
+        }
+
+        // Re-wire events (must always run — Go clears callbacks each render)
+        if (existing) {
+            NSNumber *hasOnPress = props[@"_hasOnPress"];
+            if (hasOnPress && [hasOnPress boolValue]) {
+                wireOnPress(existing, [viewID intValue], ctx);
+            }
+        }
+    }
+
+    // Pass 2: Remove views that no longer exist
+    for (NSNumber *oldID in [ctx.views allKeys]) {
+        if (![newIDSet containsObject:oldID]) {
+            UIView *view = ctx.views[oldID];
+            [view removeFromSuperview];
+            [ctx.views removeObjectForKey:oldID];
+        }
+    }
+
+    // Pass 3: Fix hierarchy and relative frames
+    for (NSDictionary *frame in newFrames) {
+        NSNumber *viewID = frame[@"id"];
+        int pid = [frame[@"pid"] intValue];
+        NSString *tag = frame[@"tag"];
+
+        if ([tag isEqualToString:@"_text"]) continue;
+
+        UIView *view = ctx.views[viewID];
+        if (!view) continue;
+
+        CGRect childAbs = [absFrames[viewID] CGRectValue];
+
+        if (pid < 0) {
+            view.frame = childAbs;
+            if (view.superview != vc.view) {
+                [view removeFromSuperview];
+                [vc.view addSubview:view];
+            }
+        } else {
+            UIView *parent = ctx.views[@(pid)];
+            if (parent) {
+                CGRect parentAbs = [absFrames[@(pid)] CGRectValue];
+                CGRect relFrame = CGRectMake(
+                    childAbs.origin.x - parentAbs.origin.x,
+                    childAbs.origin.y - parentAbs.origin.y,
+                    childAbs.size.width,
+                    childAbs.size.height
+                );
+                view.frame = relFrame;
+
+                if (view.superview != parent) {
+                    [view removeFromSuperview];
+                    [parent addSubview:view];
+                }
+
+                if ([parent isKindOfClass:[UIScrollView class]]) {
+                    UIScrollView *sv = (UIScrollView *)parent;
+                    CGFloat maxY = CGRectGetMaxY(view.frame);
+                    CGFloat maxX = CGRectGetMaxX(view.frame);
+                    if (maxY > sv.contentSize.height || maxX > sv.contentSize.width) {
+                        sv.contentSize = CGSizeMake(
+                            MAX(sv.contentSize.width, maxX),
+                            MAX(sv.contentSize.height, maxY)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Save new frame data for next diff
+    [ctx.framesByID removeAllObjects];
+    for (NSDictionary *frame in newFrames) {
+        ctx.framesByID[frame[@"id"]] = frame;
     }
 }
 
@@ -462,22 +684,23 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
 }
 
 - (void)renderWithViewController:(UIViewController *)vc {
-    goxViewController = vc; // save for re-renders
+    goxViewController = vc;
+    goxActiveContext = [[GoxRenderContext alloc] init];
+
     CGRect screen = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = self.window.safeAreaInsets;
 
-    NSLog(@"GOX: Screen %.0fx%.0f, safe: t=%.0f r=%.0f b=%.0f l=%.0f",
+    NSLog(@"GOX_INTERNAL: Screen %.0fx%.0f, safe: t=%.0f r=%.0f b=%.0f l=%.0f",
           screen.size.width, screen.size.height,
           safe.top, safe.right, safe.bottom, safe.left);
 
-    // Call Go layout engine
     const char *json = GoxGetLayout(
         screen.size.width, screen.size.height,
         safe.top, safe.right, safe.bottom, safe.left
     );
 
     if (!json) {
-        NSLog(@"GOX: GoxGetLayout returned null");
+        NSLog(@"GOX_INTERNAL: GoxGetLayout returned null");
         return;
     }
 
@@ -488,12 +711,12 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
     NSArray *frames = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
 
     if (error || ![frames isKindOfClass:[NSArray class]]) {
-        NSLog(@"GOX: JSON parse error: %@", error);
+        NSLog(@"GOX_INTERNAL: JSON parse error: %@", error);
         return;
     }
 
-    NSLog(@"GOX: Building UI from %lu frames", (unsigned long)[frames count]);
-    buildUI(vc, frames);
+    NSLog(@"GOX_INTERNAL: Building UI from %lu frames", (unsigned long)[frames count]);
+    buildUI(vc, goxActiveContext, frames);
 }
 
 @end

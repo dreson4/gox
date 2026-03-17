@@ -1,6 +1,10 @@
 package gox
 
 import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+
 	"gox/internal/yoga"
 )
 
@@ -17,6 +21,7 @@ type LayoutFrame struct {
 	Height   float64 `json:"h"`
 	ParentID int     `json:"pid"`
 	Props    P       `json:"props,omitempty"`
+	Hash     string  `json:"hash,omitempty"`
 }
 
 // ScreenInfo provides screen dimensions and safe area insets.
@@ -289,6 +294,7 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 			}
 		}
 
+		frame.Hash = computeFrameHash(frame)
 		lc.frames = append(lc.frames, frame)
 
 		// Recurse into children with accumulated offset
@@ -498,6 +504,22 @@ func (lc *layoutComputer) getStyle(node *Node) (Style, bool) {
 	}
 	s, ok := node.Props["style"].(Style)
 	return s, ok
+}
+
+// --- Frame hashing ---
+
+// computeFrameHash produces a fast FNV-1a hash of a frame's visual identity.
+// The bridge compares hashes to skip unchanged frames instead of doing
+// deep dictionary equality on props.
+func computeFrameHash(f LayoutFrame) string {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s|%s|%.1f|%.1f|%.1f|%.1f", f.Tag, f.Text, f.X, f.Y, f.Width, f.Height)
+	if f.Props != nil {
+		if b, err := json.Marshal(f.Props); err == nil {
+			h.Write(b)
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum64())
 }
 
 // --- Enum mappers ---
