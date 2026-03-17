@@ -31,3 +31,5 @@ dist/
 testapp/ios/
 testapp/*_gox.go
 testapp/main_gox_bootstrap.go
+*.o
+*.a
