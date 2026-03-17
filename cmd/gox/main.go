@@ -386,7 +386,20 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 	}
 	os.WriteFile(filepath.Join(appDir, "Info.plist"), plistData, 0644)
 
-	// Compile bridge.m + link with libgox.a + libyoga_ios.a
+	// Collect all .m files in the app directory for compilation
+	appSrcDir := filepath.Join(iosDir, appName)
+	entries, err := os.ReadDir(appSrcDir)
+	if err != nil {
+		return fmt.Errorf("reading app src dir: %w", err)
+	}
+	var mFiles []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".m") {
+			mFiles = append(mFiles, filepath.Join(appSrcDir, e.Name()))
+		}
+	}
+
+	// Compile all .m files + link with libgox.a + libyoga_ios.a
 	clangArgs := []string{
 		"-isysroot", sdkPath,
 		"-miphonesimulator-version-min=16.0",
@@ -397,13 +410,15 @@ func buildAndLaunch(projectDir, iosDir, appName string, device simDevice, stream
 		"-framework", "QuartzCore",
 		"-framework", "Security",
 		"-I", iosDir,
-		filepath.Join(iosDir, appName, "bridge.m"),
+	}
+	clangArgs = append(clangArgs, mFiles...)
+	clangArgs = append(clangArgs,
 		filepath.Join(iosDir, "libgox.a"),
 		filepath.Join(iosDir, "libyoga_ios.a"),
 		"-lc++",
 		"-lresolv",
 		"-o", filepath.Join(appDir, appName),
-	}
+	)
 
 	cmd := exec.Command("clang", clangArgs...)
 	cmd.Stdout = os.Stdout

@@ -30,9 +30,13 @@ import (
 	"unsafe"
 )
 
-// renderAndLayout calls render() and computes layout for the given screen.
+func init() {
+	gox.SetRootScreen(func() *gox.Node { return render() })
+}
+
+// renderAndLayout renders the current screen and computes layout.
 func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
-	tree := render()
+	tree := gox.CurrentScreen()
 	if tree == nil {
 		return []byte("[]")
 	}
@@ -45,11 +49,25 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 		SafeLeft:   safeL,
 	}
 	frames := gox.ComputeLayout(tree, screen)
-	data, err := json.Marshal(frames)
+	framesJSON, err := json.Marshal(frames)
 	if err != nil {
 		return []byte("[]")
 	}
-	return data
+
+	// Check for pending navigation action
+	action := gox.PendingNavAction()
+	if action != "" {
+		type navResult struct {
+			Action string          ` + "`" + `json:"action"` + "`" + `
+			Frames json.RawMessage ` + "`" + `json:"frames"` + "`" + `
+			Title  string          ` + "`" + `json:"title,omitempty"` + "`" + `
+		}
+		result := navResult{Action: action, Frames: framesJSON, Title: gox.PendingNavTitle()}
+		wrapped, _ := json.Marshal(result)
+		return wrapped
+	}
+
+	return framesJSON
 }
 
 // Saved screen info for re-renders
@@ -86,6 +104,11 @@ func GoxRerender() *C.char {
 	return C.CString(string(data))
 }
 
+//export GoxHandleBack
+func GoxHandleBack() {
+	gox.HandleBack()
+}
+
 //export GoxFreeString
 func GoxFreeString(s *C.char) {
 	C.free(unsafe.Pointer(s))
@@ -110,12 +133,13 @@ import (
 
 func init() {
 	gox.EnablePerfMonitor()
+	gox.SetRootScreen(func() *gox.Node { return render() })
 }
 
-// renderAndLayout calls render() and computes layout for the given screen.
+// renderAndLayout renders the current screen and computes layout.
 func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 	t0 := time.Now()
-	tree := render()
+	tree := gox.CurrentScreen()
 	t1 := time.Now()
 
 	if tree == nil {
@@ -139,20 +163,33 @@ func renderAndLayout(w, h, safeT, safeR, safeB, safeL float64) []byte {
 		return []byte("[]")
 	}
 
+	perf := gox.PerfData{
+		RenderNs:   t1.Sub(t0).Nanoseconds(),
+		LayoutNs:   t2.Sub(t1).Nanoseconds(),
+		MarshalNs:  t3.Sub(t2).Nanoseconds(),
+		FrameCount: len(frames),
+	}
+
+	// Check for pending navigation action
+	action := gox.PendingNavAction()
+	if action != "" {
+		type navPerfResult struct {
+			Action string          ` + "`" + `json:"action"` + "`" + `
+			Frames json.RawMessage ` + "`" + `json:"frames"` + "`" + `
+			Perf   gox.PerfData    ` + "`" + `json:"perf"` + "`" + `
+			Title  string          ` + "`" + `json:"title,omitempty"` + "`" + `
+		}
+		result := navPerfResult{Action: action, Frames: framesJSON, Perf: perf, Title: gox.PendingNavTitle()}
+		wrapped, _ := json.Marshal(result)
+		return wrapped
+	}
+
 	// Wrap with perf data
 	type perfResult struct {
 		Frames json.RawMessage ` + "`" + `json:"frames"` + "`" + `
 		Perf   gox.PerfData    ` + "`" + `json:"perf"` + "`" + `
 	}
-	result := perfResult{
-		Frames: framesJSON,
-		Perf: gox.PerfData{
-			RenderNs:   t1.Sub(t0).Nanoseconds(),
-			LayoutNs:   t2.Sub(t1).Nanoseconds(),
-			MarshalNs:  t3.Sub(t2).Nanoseconds(),
-			FrameCount: len(frames),
-		},
-	}
+	result := perfResult{Frames: framesJSON, Perf: perf}
 	wrapped, _ := json.Marshal(result)
 	return wrapped
 }
@@ -189,6 +226,11 @@ func GoxRerender() *C.char {
 		savedScreen.safeB, savedScreen.safeL,
 	)
 	return C.CString(string(data))
+}
+
+//export GoxHandleBack
+func GoxHandleBack() {
+	gox.HandleBack()
 }
 
 //export GoxFreeString

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-//go:embed templates/bridge.m templates/Info.plist templates/main.m
+//go:embed templates/bridge_core.m templates/Info.plist templates/main.m templates/components/*.m
 var templates embed.FS
 
 // IOSConfig holds configuration for generating an iOS project.
@@ -40,14 +40,12 @@ func GenerateIOS(cfg IOSConfig) error {
 		return fmt.Errorf("creating app dir: %w", err)
 	}
 
-	// Copy template files
-	filesToCopy := []struct {
-		template string
-		output   string
-	}{
-		{"templates/bridge.m", filepath.Join(appDir, "bridge.m")},
-		{"templates/Info.plist", filepath.Join(appDir, "Info.plist")},
-		{"templates/main.m", filepath.Join(appDir, "main.m")},
+	// Clean up stale .m files from previous builds (e.g. old bridge.m)
+	existingFiles, _ := os.ReadDir(appDir)
+	for _, f := range existingFiles {
+		if strings.HasSuffix(f.Name(), ".m") {
+			os.Remove(filepath.Join(appDir, f.Name()))
+		}
 	}
 
 	replacer := strings.NewReplacer(
@@ -57,7 +55,17 @@ func GenerateIOS(cfg IOSConfig) error {
 		"{{DEPLOYMENT_TARGET}}", cfg.DeploymentTarget,
 	)
 
-	for _, f := range filesToCopy {
+	// Copy core template files
+	coreFiles := []struct {
+		template string
+		output   string
+	}{
+		{"templates/bridge_core.m", filepath.Join(appDir, "bridge_core.m")},
+		{"templates/Info.plist", filepath.Join(appDir, "Info.plist")},
+		{"templates/main.m", filepath.Join(appDir, "main.m")},
+	}
+
+	for _, f := range coreFiles {
 		data, err := templates.ReadFile(f.template)
 		if err != nil {
 			return fmt.Errorf("reading template %s: %w", f.template, err)
@@ -68,27 +76,69 @@ func GenerateIOS(cfg IOSConfig) error {
 		}
 	}
 
+	// Copy component .m files
+	componentFiles, err := templates.ReadDir("templates/components")
+	if err != nil {
+		return fmt.Errorf("reading components dir: %w", err)
+	}
+
+	var componentNames []string
+	for _, entry := range componentFiles {
+		if strings.HasSuffix(entry.Name(), ".m") {
+			componentNames = append(componentNames, entry.Name())
+			data, err := templates.ReadFile("templates/components/" + entry.Name())
+			if err != nil {
+				return fmt.Errorf("reading component %s: %w", entry.Name(), err)
+			}
+			if err := os.WriteFile(filepath.Join(appDir, entry.Name()), data, 0644); err != nil {
+				return fmt.Errorf("writing component %s: %w", entry.Name(), err)
+			}
+		}
+	}
+
 	// Generate the Xcode project
-	if err := generateXcodeProject(cfg, appDir); err != nil {
+	if err := generateXcodeProject(cfg, appDir, componentNames); err != nil {
 		return fmt.Errorf("generating Xcode project: %w", err)
 	}
 
 	return nil
 }
 
-func generateXcodeProject(cfg IOSConfig, appDir string) error {
+func generateXcodeProject(cfg IOSConfig, appDir string, componentNames []string) error {
 	projDir := filepath.Join(cfg.OutputDir, cfg.AppName+".xcodeproj")
 	if err := os.MkdirAll(projDir, 0755); err != nil {
 		return err
 	}
 
-	pbxproj := generatePbxproj(cfg)
+	pbxproj := generatePbxproj(cfg, componentNames)
 	return os.WriteFile(filepath.Join(projDir, "project.pbxproj"), []byte(pbxproj), 0644)
 }
 
-func generatePbxproj(cfg IOSConfig) string {
-	// Minimal Xcode project file that builds the iOS app.
-	// This links the Go static library and native bridge code.
+func generatePbxproj(cfg IOSConfig, componentNames []string) string {
+	// All source .m files: bridge_core.m, main.m, plus component files
+	allSources := []string{"bridge_core.m", "main.m"}
+	allSources = append(allSources, componentNames...)
+
+	// Generate dynamic PBX entries for source files
+	// IDs: A1CCnnnn for build files, A2CCnnnn for file refs
+	var buildFileSection strings.Builder
+	var fileRefSection strings.Builder
+	var sourcesBuildFiles strings.Builder
+	var groupChildren strings.Builder
+
+	for i, name := range allSources {
+		buildID := fmt.Sprintf("A1CC%04d", i)
+		refID := fmt.Sprintf("A2CC%04d", i)
+		buildFileSection.WriteString(fmt.Sprintf(
+			"\t\t%s /* %s in Sources */ = {isa = PBXBuildFile; fileRef = %s; };\n",
+			buildID, name, refID))
+		fileRefSection.WriteString(fmt.Sprintf(
+			"\t\t%s /* %s */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = %s; sourceTree = \"<group>\"; };\n",
+			refID, name, name))
+		sourcesBuildFiles.WriteString(fmt.Sprintf("\t\t\t\t%s /* %s in Sources */,\n", buildID, name))
+		groupChildren.WriteString(fmt.Sprintf("\t\t\t\t%s /* %s */,\n", refID, name))
+	}
+
 	return fmt.Sprintf(`// !$*UTF8*$!
 {
 	archiveVersion = 1;
@@ -98,18 +148,14 @@ func generatePbxproj(cfg IOSConfig) string {
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1000001 /* bridge.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
-		A1000002 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
-		A1000003 /* libgox.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000003; };
+%[4]s		A1000003 /* libgox.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000003; };
 		A1000004 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000004; };
 		A1000005 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000005; };
 		A1000006 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000006; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A2000001 /* bridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = bridge.m; sourceTree = "<group>"; };
-		A2000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		A2000003 /* libgox.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libgox.a; sourceTree = "<group>"; };
+%[5]s		A2000003 /* libgox.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libgox.a; sourceTree = "<group>"; };
 		A2000004 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		A2000005 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		A2000006 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
@@ -144,9 +190,7 @@ func generatePbxproj(cfg IOSConfig) string {
 		A4000002 /* %[1]s */ = {
 			isa = PBXGroup;
 			children = (
-				A2000001 /* bridge.m */,
-				A2000002 /* main.m */,
-				A2000007 /* Info.plist */,
+%[6]s				A2000007 /* Info.plist */,
 			);
 			path = "%[1]s";
 			sourceTree = "<group>";
@@ -217,9 +261,7 @@ func generatePbxproj(cfg IOSConfig) string {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000001 /* bridge.m in Sources */,
-				A1000002 /* main.m in Sources */,
-			);
+%[7]s			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -230,11 +272,11 @@ func generatePbxproj(cfg IOSConfig) string {
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_FILE = "%[1]s/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = %[3]s;
+				IPHONEOS_DEPLOYMENT_TARGET = %[2]s;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				LIBRARY_SEARCH_PATHS = "$(inherited) $(PROJECT_DIR)";
 				OTHER_LDFLAGS = "-lresolv";
-				PRODUCT_BUNDLE_IDENTIFIER = "%[2]s";
+				PRODUCT_BUNDLE_IDENTIFIER = "%[3]s";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -245,11 +287,11 @@ func generatePbxproj(cfg IOSConfig) string {
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_FILE = "%[1]s/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = %[3]s;
+				IPHONEOS_DEPLOYMENT_TARGET = %[2]s;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				LIBRARY_SEARCH_PATHS = "$(inherited) $(PROJECT_DIR)";
 				OTHER_LDFLAGS = "-lresolv";
-				PRODUCT_BUNDLE_IDENTIFIER = "%[2]s";
+				PRODUCT_BUNDLE_IDENTIFIER = "%[3]s";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -313,5 +355,9 @@ func generatePbxproj(cfg IOSConfig) string {
 	};
 	rootObject = A8000001 /* Project object */;
 }
-`, cfg.AppName, cfg.BundleID, cfg.DeploymentTarget)
+`, cfg.AppName, cfg.DeploymentTarget, cfg.BundleID,
+		buildFileSection.String(),  // [4]
+		fileRefSection.String(),    // [5]
+		groupChildren.String(),     // [6]
+		sourcesBuildFiles.String()) // [7]
 }

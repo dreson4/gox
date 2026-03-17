@@ -66,6 +66,13 @@ type Style struct {
 	ShadowOpacity            float64
 }
 
+// Style accessor methods — used by components package via interface assertions.
+
+func (s Style) GetFontSize() float64  { return s.FontSize }
+func (s Style) GetFontWeight() string  { return s.FontWeight }
+func (s Style) GetColor() string       { return s.Color }
+func (s Style) GetHeight() float64     { return s.Height }
+
 // Styles is a named map of styles for convenient grouping.
 //
 //	var styles = gox.Styles{

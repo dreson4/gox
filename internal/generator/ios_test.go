@@ -3,6 +3,7 @@ package generator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,9 +19,9 @@ func TestGenerateIOS(t *testing.T) {
 		t.Fatalf("GenerateIOS failed: %v", err)
 	}
 
-	// Check generated files exist
+	// Check core generated files exist
 	expectedFiles := []string{
-		"TestApp/bridge.m",
+		"TestApp/bridge_core.m",
 		"TestApp/main.m",
 		"TestApp/Info.plist",
 		"TestApp.xcodeproj/project.pbxproj",
@@ -33,16 +34,41 @@ func TestGenerateIOS(t *testing.T) {
 		}
 	}
 
-	// Check pbxproj contains bundle ID
+	// Check component files exist
+	componentFiles := []string{
+		"TestApp/gox_view.m",
+		"TestApp/gox_text.m",
+		"TestApp/gox_button.m",
+		"TestApp/gox_image.m",
+		"TestApp/gox_textinput.m",
+		"TestApp/gox_switch.m",
+		"TestApp/gox_scrollview.m",
+	}
+
+	for _, f := range componentFiles {
+		path := filepath.Join(tmpDir, f)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("expected component file %s to exist", f)
+		}
+	}
+
+	// Check pbxproj contains bundle ID and all source files
 	pbx, err := os.ReadFile(filepath.Join(tmpDir, "TestApp.xcodeproj/project.pbxproj"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(string(pbx), "com.test.app") {
+	pbxStr := string(pbx)
+	if !strings.Contains(pbxStr, "com.test.app") {
 		t.Error("pbxproj should contain bundle ID")
 	}
-	if !contains(string(pbx), "TestApp") {
+	if !strings.Contains(pbxStr, "TestApp") {
 		t.Error("pbxproj should contain app name")
+	}
+	if !strings.Contains(pbxStr, "bridge_core.m") {
+		t.Error("pbxproj should reference bridge_core.m")
+	}
+	if !strings.Contains(pbxStr, "gox_text.m") {
+		t.Error("pbxproj should reference component files")
 	}
 }
 
@@ -57,16 +83,7 @@ func TestGenerateIOSDefaults(t *testing.T) {
 	}
 
 	// Should use default name
-	if _, err := os.Stat(filepath.Join(tmpDir, "GoxApp/bridge.m")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(tmpDir, "GoxApp/bridge_core.m")); os.IsNotExist(err) {
 		t.Error("should use default app name GoxApp")
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 
+	"gox/components"
 	"gox/internal/yoga"
 )
 
@@ -135,34 +136,19 @@ func (lc *layoutComputer) buildElement(node *Node, parentID int) *yoga.Node {
 		lc.applyStyleToYoga(yn, style)
 	}
 
-	// SafeArea: apply screen safe insets as padding
-	if node.Tag == "SafeArea" {
-		yn.SetPadding(yoga.EdgeTop, float32(lc.screen.SafeTop))
-		yn.SetPadding(yoga.EdgeRight, float32(lc.screen.SafeRight))
-		yn.SetPadding(yoga.EdgeBottom, float32(lc.screen.SafeBottom))
-		yn.SetPadding(yoga.EdgeLeft, float32(lc.screen.SafeLeft))
+	// Component-specific yoga configuration
+	comp := components.Get(node.Tag)
+	if comp != nil && comp.ConfigureYoga != nil {
+		comp.ConfigureYoga(yn, node.Props, lc.buildNodeInfoChildren(node), components.ScreenInfoData{
+			Width: lc.screen.Width, Height: lc.screen.Height,
+			SafeTop: lc.screen.SafeTop, SafeRight: lc.screen.SafeRight,
+			SafeBottom: lc.screen.SafeBottom, SafeLeft: lc.screen.SafeLeft,
+		})
 	}
 
-	// Default intrinsic sizes for native elements
-	switch node.Tag {
-	case "Switch":
-		yn.SetWidth(51)  // iOS UISwitch default size
-		yn.SetHeight(31)
-	case "TextInput":
-		if _, ok := lc.getStyle(node); !ok {
-			yn.SetHeight(44) // default iOS text field height
-		}
-	}
-
-	// For Text elements, estimate size from children's text content
-	if node.Tag == "Text" {
-		text := collectTextContent(node)
-		fontSize := lc.getTextFontSize(node)
-		estimateTextSize(yn, text, fontSize)
-	}
-
-	// Recursively add children (skip for Text — text content handled above)
-	if node.Tag != "Text" {
+	// Recurse children unless component handles them itself
+	skipChildren := comp != nil && comp.SkipChildren
+	if !skipChildren {
 		childIdx := 0
 		for _, child := range node.Children {
 			childYoga := lc.buildYogaTree(child, id)
@@ -176,6 +162,31 @@ func (lc *layoutComputer) buildElement(node *Node, parentID int) *yoga.Node {
 	return yn
 }
 
+// buildNodeInfo converts a Node to a components.NodeInfo for component callbacks.
+func buildNodeInfo(node *Node) components.NodeInfo {
+	if node == nil {
+		return components.NodeInfo{}
+	}
+	info := components.NodeInfo{
+		Tag:   node.Tag,
+		Text:  node.Text,
+		Type:  int(node.Type),
+		Props: node.Props,
+	}
+	for _, child := range node.Children {
+		info.Children = append(info.Children, buildNodeInfo(child))
+	}
+	return info
+}
+
+func (lc *layoutComputer) buildNodeInfoChildren(node *Node) []components.NodeInfo {
+	var children []components.NodeInfo
+	for _, child := range node.Children {
+		children = append(children, buildNodeInfo(child))
+	}
+	return children
+}
+
 func (lc *layoutComputer) buildTextNode(node *Node, parentID int) *yoga.Node {
 	yn := yoga.NewNode()
 	_ = lc.allocID()
@@ -187,7 +198,7 @@ func (lc *layoutComputer) buildTextNode(node *Node, parentID int) *yoga.Node {
 	})
 
 	// Estimate text size
-	estimateTextSize(yn, node.Text, 17) // default font size
+	components.EstimateTextSize(yn, node.Text, 17) // default font size
 
 	return yn
 }
@@ -248,35 +259,29 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 			if node.Type == NodeText {
 				frame.Text = node.Text
 				frame.Tag = "_text"
-			} else if node.Type == NodeElement && node.Tag == "Text" {
-				// Collect text content from children for Text elements
-				frame.Text = collectTextContent(node)
-			} else if node.Type == NodeElement && node.Tag == "Button" {
-				// Collect button label and text style from child Text elements
-				for _, child := range node.Children {
-					if child.Type == NodeElement && child.Tag == "Text" {
-						frame.Text = collectTextContent(child)
-					}
-				}
-			}
-			if node.Type == NodeFragment {
+			} else if node.Type == NodeFragment {
 				frame.Tag = "_fragment"
 			}
 			frame.Props = lc.collectVisualProps(node)
 
-			// For buttons, copy child Text styling so bridge can apply to UIButton title
-			if node.Type == NodeElement && node.Tag == "Button" {
-				for _, child := range node.Children {
-					if child.Type == NodeElement && child.Tag == "Text" {
-						if childStyle, ok := lc.getStyle(child); ok {
-							if frame.Props == nil {
-								frame.Props = P{}
-							}
-							frame.Props["_btnTextColor"] = childStyle.Color
-							frame.Props["_btnTextSize"] = childStyle.FontSize
-							frame.Props["_btnTextWeight"] = childStyle.FontWeight
+			// Component-specific frame extraction
+			if node.Type == NodeElement {
+				comp := components.Get(node.Tag)
+				if comp != nil && comp.ExtractFrame != nil {
+					fd := &components.FrameData{
+						Text:  frame.Text,
+						Props: frame.Props,
+					}
+					comp.ExtractFrame(fd, buildNodeInfo(node), lc.buildNodeInfoChildren(node))
+					frame.Text = fd.Text
+					// Merge any props added by the component
+					if fd.Props != nil {
+						if frame.Props == nil {
+							frame.Props = P{}
 						}
-						break
+						for k, v := range fd.Props {
+							frame.Props[k] = v
+						}
 					}
 				}
 			}
@@ -285,7 +290,6 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 			if node.Props != nil {
 				if onPress, ok := node.Props["onPress"].(func()); ok {
 					RegisterEvent(i, onPress)
-					// Mark this frame as having an event so bridge can wire it
 					if frame.Props == nil {
 						frame.Props = P{}
 					}
@@ -465,22 +469,7 @@ func (lc *layoutComputer) applyStyleToYoga(yn *yoga.Node, s Style) {
 	}
 }
 
-// --- Text size estimation ---
-
-func estimateTextSize(yn *yoga.Node, text string, fontSize float64) {
-	if text == "" {
-		return
-	}
-	// Rough estimation: each character is ~0.5x fontSize wide
-	// Height is ~1.4x fontSize per line
-	charWidth := fontSize * 0.55
-	lineHeight := fontSize * 1.4
-	width := float64(len(text)) * charWidth
-	yn.SetHeight(float32(lineHeight))
-	// Don't set width — let it be determined by parent (stretch)
-	_ = width
-}
-
+// collectTextContent extracts text from child TextNodes.
 func collectTextContent(node *Node) string {
 	var text string
 	for _, child := range node.Children {
@@ -489,13 +478,6 @@ func collectTextContent(node *Node) string {
 		}
 	}
 	return text
-}
-
-func (lc *layoutComputer) getTextFontSize(node *Node) float64 {
-	if s, ok := lc.getStyle(node); ok && s.FontSize > 0 {
-		return s.FontSize
-	}
-	return 17 // iOS default
 }
 
 func (lc *layoutComputer) getStyle(node *Node) (Style, bool) {
