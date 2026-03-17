@@ -25,6 +25,8 @@ extern void GoxHandleFocus(int viewID);
 extern void GoxHandleBlur(int viewID);
 extern void GoxHandleLoad(int viewID);
 extern void GoxHandleError(int viewID);
+extern void GoxHandleScroll(int viewID, double offset);
+extern void GoxHandleScrollEnd(int viewID);
 extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
 extern void GoxHandleBack(void);
@@ -725,7 +727,9 @@ static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames
             || [props[@"_hasOnFocus"] boolValue]
             || [props[@"_hasOnBlur"] boolValue]
             || [props[@"_hasOnLoad"] boolValue]
-            || [props[@"_hasOnError"] boolValue];
+            || [props[@"_hasOnError"] boolValue]
+            || [props[@"_hasOnScroll"] boolValue]
+            || [props[@"_hasOnScrollEnd"] boolValue];
         if (hasEvent) {
             wireEvent(view, tag, viewID, ctx);
         }
@@ -929,7 +933,9 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
                 || [props[@"_hasOnChange"] boolValue]
                 || [props[@"_hasOnSubmit"] boolValue]
                 || [props[@"_hasOnFocus"] boolValue]
-                || [props[@"_hasOnBlur"] boolValue];
+                || [props[@"_hasOnBlur"] boolValue]
+                || [props[@"_hasOnScroll"] boolValue]
+                || [props[@"_hasOnScrollEnd"] boolValue];
             if (hasEvent) {
                 wireEvent(existing, tag, [viewID intValue], ctx);
             }

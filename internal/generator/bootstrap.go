@@ -181,6 +181,16 @@ func GoxHandleError(viewID C.int) {
 	gox.HandleErrorEvent(int(viewID))
 }
 
+//export GoxHandleScroll
+func GoxHandleScroll(viewID C.int, offset C.double) {
+	gox.HandleScrollEvent(int(viewID), float64(offset))
+}
+
+//export GoxHandleScrollEnd
+func GoxHandleScrollEnd(viewID C.int) {
+	gox.HandleScrollEndEvent(int(viewID))
+}
+
 //export GoxRerender
 func GoxRerender() *C.char {
 	data := renderAndLayout(
@@ -400,6 +410,16 @@ func GoxHandleLoad(viewID C.int) {
 //export GoxHandleError
 func GoxHandleError(viewID C.int) {
 	gox.HandleErrorEvent(int(viewID))
+}
+
+//export GoxHandleScroll
+func GoxHandleScroll(viewID C.int, offset C.double) {
+	gox.HandleScrollEvent(int(viewID), float64(offset))
+}
+
+//export GoxHandleScrollEnd
+func GoxHandleScrollEnd(viewID C.int) {
+	gox.HandleScrollEndEvent(int(viewID))
 }
 
 //export GoxRerender

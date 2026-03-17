@@ -319,6 +319,14 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 					RegisterErrorEvent(i, onError)
 					frame.Props["_hasOnError"] = true
 				}
+				if onScroll, ok := node.Props["onScroll"].(func(float64)); ok {
+					RegisterScrollEvent(i, onScroll)
+					frame.Props["_hasOnScroll"] = true
+				}
+				if onScrollEnd, ok := node.Props["onScrollEnd"].(func()); ok {
+					RegisterScrollEndEvent(i, onScrollEnd)
+					frame.Props["_hasOnScrollEnd"] = true
+				}
 			}
 		}
 

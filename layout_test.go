@@ -641,6 +641,105 @@ func TestLayoutParentIDs(t *testing.T) {
 	}
 }
 
+func TestLayoutScrollViewConfigureYoga(t *testing.T) {
+	// ScrollView with flex:1 should fill parent and allow children to exceed bounds
+	tree := E("View", P{"style": Style{Width: 390, Height: 844}},
+		E("ScrollView", P{"style": Style{Flex: 1}},
+			E("View", P{"style": Style{Height: 1200}},
+				E("View", P{"style": Style{Height: 100}}),
+				E("View", P{"style": Style{Height: 100}}),
+			),
+		),
+	)
+
+	frames := ComputeLayout(tree, testScreen)
+
+	sv := findFrame(frames, "ScrollView")
+	if sv == nil {
+		t.Fatal("ScrollView frame not found")
+	}
+	// ScrollView should fill parent
+	if !approxF(sv.Width, 390) {
+		t.Errorf("ScrollView width expected 390, got %f", sv.Width)
+	}
+	if !approxF(sv.Height, 844) {
+		t.Errorf("ScrollView height expected 844, got %f", sv.Height)
+	}
+}
+
+func TestLayoutScrollViewExtractFrame(t *testing.T) {
+	tree := E("ScrollView", P{
+		"style":                  Style{Flex: 1},
+		"horizontal":             true,
+		"bounces":                false,
+		"showsVerticalIndicator": false,
+		"pagingEnabled":          true,
+		"decelerationRate":       "fast",
+	},
+		E("View", P{"style": Style{Height: 100}}),
+	)
+
+	frames := ComputeLayout(tree, testScreen)
+
+	sv := findFrame(frames, "ScrollView")
+	if sv == nil {
+		t.Fatal("ScrollView frame not found")
+	}
+
+	if sv.Props["horizontal"] != true {
+		t.Error("expected horizontal=true")
+	}
+	if sv.Props["bounces"] != false {
+		t.Error("expected bounces=false")
+	}
+	if sv.Props["showsVerticalIndicator"] != false {
+		t.Error("expected showsVerticalIndicator=false")
+	}
+	if sv.Props["pagingEnabled"] != true {
+		t.Error("expected pagingEnabled=true")
+	}
+	if sv.Props["decelerationRate"] != "fast" {
+		t.Errorf("expected decelerationRate=fast, got %v", sv.Props["decelerationRate"])
+	}
+}
+
+func TestLayoutScrollViewEventRegistration(t *testing.T) {
+	var scrollOffset float64
+	scrollEndCalled := false
+
+	tree := E("ScrollView", P{
+		"style":       Style{Flex: 1},
+		"onScroll":    func(offset float64) { scrollOffset = offset },
+		"onScrollEnd": func() { scrollEndCalled = true },
+	},
+		E("View", P{"style": Style{Height: 100}}),
+	)
+
+	frames := ComputeLayout(tree, testScreen)
+
+	sv := findFrame(frames, "ScrollView")
+	if sv == nil {
+		t.Fatal("ScrollView frame not found")
+	}
+
+	if sv.Props["_hasOnScroll"] != true {
+		t.Error("expected _hasOnScroll=true")
+	}
+	if sv.Props["_hasOnScrollEnd"] != true {
+		t.Error("expected _hasOnScrollEnd=true")
+	}
+
+	// Verify callbacks were registered
+	HandleScrollEvent(sv.ID, 42.5)
+	if scrollOffset != 42.5 {
+		t.Errorf("expected scroll offset 42.5, got %f", scrollOffset)
+	}
+	HandleScrollEndEvent(sv.ID)
+	if !scrollEndCalled {
+		t.Error("expected scrollEnd callback to fire")
+	}
+}
+
 func TestLayoutFrameHashing(t *testing.T) {
 	tree := E("View", P{"style": Style{Width: 200, Height: 200, BackgroundColor: "#FF0000"}},
 		E("Text", P{"style": Style{FontSize: 16}}, T("Hello")),

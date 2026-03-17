@@ -14,6 +14,8 @@ var (
 	blurCallbacks      map[int]func()
 	loadCallbacks      map[int]func()
 	errorCallbacks     map[int]func()
+	scrollCallbacks    map[int]func(float64)
+	scrollEndCallbacks map[int]func()
 	rerenderFn         func()
 )
 
@@ -88,6 +90,26 @@ func RegisterErrorEvent(id int, callback func()) {
 	errorCallbacks[id] = callback
 }
 
+// RegisterScrollEvent stores a scroll callback (onScroll) for a view ID.
+func RegisterScrollEvent(id int, callback func(float64)) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if scrollCallbacks == nil {
+		scrollCallbacks = make(map[int]func(float64))
+	}
+	scrollCallbacks[id] = callback
+}
+
+// RegisterScrollEndEvent stores a scroll-end callback for a view ID.
+func RegisterScrollEndEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if scrollEndCallbacks == nil {
+		scrollEndCallbacks = make(map[int]func())
+	}
+	scrollEndCallbacks[id] = callback
+}
+
 // ClearEvents removes all registered callbacks.
 // Called before each render to avoid stale references.
 func ClearEvents() {
@@ -100,6 +122,8 @@ func ClearEvents() {
 	blurCallbacks = make(map[int]func())
 	loadCallbacks = make(map[int]func())
 	errorCallbacks = make(map[int]func())
+	scrollCallbacks = make(map[int]func(float64))
+	scrollEndCallbacks = make(map[int]func())
 }
 
 // HandleEvent fires the callback for a view ID.
@@ -177,6 +201,30 @@ func HandleLoadEvent(id int) {
 func HandleErrorEvent(id int) {
 	eventMu.Lock()
 	cb, ok := errorCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleScrollEvent fires the scroll callback for a view ID with the offset.
+// Called from the native bridge during scrolling — does NOT trigger rerender.
+func HandleScrollEvent(id int, offset float64) {
+	eventMu.Lock()
+	cb, ok := scrollCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb(offset)
+	}
+}
+
+// HandleScrollEndEvent fires the scroll-end callback for a view ID.
+// Called from the native bridge when scrolling stops.
+func HandleScrollEndEvent(id int) {
+	eventMu.Lock()
+	cb, ok := scrollEndCallbacks[id]
 	eventMu.Unlock()
 
 	if ok && cb != nil {

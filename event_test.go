@@ -72,6 +72,8 @@ func TestClearEventsAllTypes(t *testing.T) {
 	RegisterBlurEvent(5, func() {})
 	RegisterLoadEvent(6, func() {})
 	RegisterErrorEvent(7, func() {})
+	RegisterScrollEvent(8, func(float64) {})
+	RegisterScrollEndEvent(9, func() {})
 
 	ClearEvents()
 
@@ -98,6 +100,12 @@ func TestClearEventsAllTypes(t *testing.T) {
 	if len(errorCallbacks) != 0 {
 		t.Error("errorCallbacks should be empty after clear")
 	}
+	if len(scrollCallbacks) != 0 {
+		t.Error("scrollCallbacks should be empty after clear")
+	}
+	if len(scrollEndCallbacks) != 0 {
+		t.Error("scrollEndCallbacks should be empty after clear")
+	}
 	eventMu.Unlock()
 }
 
@@ -118,6 +126,32 @@ func TestRegisterAndHandleErrorEvent(t *testing.T) {
 	HandleErrorEvent(1)
 	if !called {
 		t.Error("expected error callback to be called")
+	}
+}
+
+func TestRegisterAndHandleScrollEvent(t *testing.T) {
+	ClearEvents()
+	var received float64
+	RegisterScrollEvent(1, func(offset float64) { received = offset })
+	HandleScrollEvent(1, 123.5)
+	if received != 123.5 {
+		t.Errorf("expected 123.5, got %f", received)
+	}
+}
+
+func TestHandleScrollEventMissingID(t *testing.T) {
+	ClearEvents()
+	// Should not panic
+	HandleScrollEvent(999, 0)
+}
+
+func TestRegisterAndHandleScrollEndEvent(t *testing.T) {
+	ClearEvents()
+	called := false
+	RegisterScrollEndEvent(1, func() { called = true })
+	HandleScrollEndEvent(1)
+	if !called {
+		t.Error("expected scroll end callback to be called")
 	}
 }
 
