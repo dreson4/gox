@@ -222,7 +222,7 @@ func runIOS() error {
 
 	// Step 5: Build native app, install, launch
 	fmt.Println("[5/5] Building and launching...")
-	return buildAndLaunch(iosDir, appName, device)
+	return buildAndLaunch(cwd, iosDir, appName, device)
 }
 
 func compileAllGox(dir string) error {
@@ -248,6 +248,15 @@ func buildGoArchive(projectDir, iosDir string) error {
 	outPath := filepath.Join(iosDir, "libgox.a")
 	sdkPath := iosSimulatorSDK()
 
+	// Find the gox module root (where the yoga lib lives)
+	goxRoot := findGoxRoot(projectDir)
+
+	// Build libyoga.a for iOS simulator (separate from host build)
+	yogaLibDir := filepath.Join(goxRoot, "internal", "yoga", "lib")
+	if err := buildYogaForIOS("", yogaLibDir, sdkPath, iosDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: yoga iOS build: %v\n", err)
+	}
+
 	cmd := exec.Command("go", "build",
 		"-buildmode=c-archive",
 		"-o", outPath,
@@ -260,14 +269,102 @@ func buildGoArchive(projectDir, iosDir string) error {
 		"CGO_ENABLED=1",
 		"CC=clang",
 		fmt.Sprintf("CGO_CFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
-		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64", sdkPath),
+		fmt.Sprintf("CGO_LDFLAGS=-isysroot %s -miphonesimulator-version-min=16.0 -arch arm64 -L%s -lyoga -lc++",
+			sdkPath, yogaLibDir),
 	)
 	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+// buildYogaForIOS compiles Yoga C++ sources for the iOS simulator target.
+// Outputs to iosDir (NOT the host lib dir) to avoid overwriting the macOS build.
+func buildYogaForIOS(yogaSrcDir, yogaLibDir, sdkPath, iosDir string) error {
+	yogaInclude := filepath.Join(yogaLibDir, "include")
+	if _, err := os.Stat(yogaInclude); os.IsNotExist(err) {
+		return fmt.Errorf("yoga include dir not found: %s", yogaInclude)
+	}
+
+	// Check if iOS yoga lib already exists
+	iosYogaLib := filepath.Join(iosDir, "libyoga_ios.a")
+	if _, err := os.Stat(iosYogaLib); err == nil {
+		return nil // already built
+	}
+
+	var cppFiles []string
+	filepath.Walk(yogaInclude, func(path string, info os.FileInfo, err error) error {
+		if err == nil && strings.HasSuffix(path, ".cpp") {
+			cppFiles = append(cppFiles, path)
+		}
+		return nil
+	})
+
+	if len(cppFiles) == 0 {
+		return fmt.Errorf("no yoga .cpp files found")
+	}
+
+	// Build dir for iOS .o files
+	iosBuildDir := filepath.Join(iosDir, "yoga_build")
+	os.MkdirAll(iosBuildDir, 0755)
+
+	var objFiles []string
+	for _, cpp := range cppFiles {
+		// Output .o to iosBuildDir to avoid polluting source tree
+		objName := strings.ReplaceAll(cpp, "/", "_")
+		objName = strings.TrimSuffix(objName, ".cpp") + ".o"
+		obj := filepath.Join(iosBuildDir, objName)
+
+		cmd := exec.Command("clang++",
+			"-std=c++20", "-O2", "-fPIC",
+			"-isysroot", sdkPath,
+			"-miphonesimulator-version-min=16.0",
+			"-arch", "arm64",
+			"-I"+yogaInclude,
+			"-c", cpp,
+			"-o", obj,
+		)
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("compiling %s: %w", filepath.Base(cpp), err)
+		}
+		objFiles = append(objFiles, obj)
+	}
+
+	args := append([]string{"rcs", iosYogaLib}, objFiles...)
+	cmd := exec.Command("ar", args...)
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func buildAndLaunch(iosDir, appName string, device simDevice) error {
+// findGoxRoot finds the gox module root by looking for the go.mod with "module gox".
+func findGoxRoot(projectDir string) string {
+	// Check if this IS the gox module
+	modFile := filepath.Join(projectDir, "go.mod")
+	if data, err := os.ReadFile(modFile); err == nil {
+		if strings.Contains(string(data), "replace gox =>") {
+			// User project with replace directive — extract the path
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.Contains(line, "replace gox =>") {
+					parts := strings.Split(line, "=>")
+					if len(parts) == 2 {
+						path := strings.TrimSpace(parts[1])
+						if !filepath.IsAbs(path) {
+							path = filepath.Join(projectDir, path)
+						}
+						return path
+					}
+				}
+			}
+		}
+		if strings.Contains(string(data), "module gox") {
+			return projectDir
+		}
+	}
+	return projectDir
+}
+
+func buildAndLaunch(projectDir, iosDir, appName string, device simDevice) error {
 	sdkPath := iosSimulatorSDK()
 	bundleID := "com.gox." + strings.ToLower(appName)
 
@@ -282,7 +379,7 @@ func buildAndLaunch(iosDir, appName string, device simDevice) error {
 	}
 	os.WriteFile(filepath.Join(appDir, "Info.plist"), plistData, 0644)
 
-	// Compile bridge.m + link with libgox.a
+	// Compile bridge.m + link with libgox.a + libyoga_ios.a
 	clangArgs := []string{
 		"-isysroot", sdkPath,
 		"-miphonesimulator-version-min=16.0",
@@ -294,6 +391,8 @@ func buildAndLaunch(iosDir, appName string, device simDevice) error {
 		"-I", iosDir,
 		filepath.Join(iosDir, appName, "bridge.m"),
 		filepath.Join(iosDir, "libgox.a"),
+		filepath.Join(iosDir, "libyoga_ios.a"),
+		"-lc++",
 		"-lresolv",
 		"-o", filepath.Join(appDir, appName),
 	}

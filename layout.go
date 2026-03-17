@@ -135,6 +135,17 @@ func (lc *layoutComputer) buildElement(node *Node, parentID int) *yoga.Node {
 		yn.SetPadding(yoga.EdgeLeft, float32(lc.screen.SafeLeft))
 	}
 
+	// Default intrinsic sizes for native elements
+	switch node.Tag {
+	case "Switch":
+		yn.SetWidth(51)  // iOS UISwitch default size
+		yn.SetHeight(31)
+	case "TextInput":
+		if _, ok := lc.getStyle(node); !ok {
+			yn.SetHeight(44) // default iOS text field height
+		}
+	}
+
 	// For Text elements, estimate size from children's text content
 	if node.Tag == "Text" {
 		text := collectTextContent(node)
@@ -229,6 +240,16 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 			if node.Type == NodeText {
 				frame.Text = node.Text
 				frame.Tag = "_text"
+			} else if node.Type == NodeElement && node.Tag == "Text" {
+				// Collect text content from children for Text elements
+				frame.Text = collectTextContent(node)
+			} else if node.Type == NodeElement && node.Tag == "Button" {
+				// Collect button label from child Text elements
+				for _, child := range node.Children {
+					if child.Type == NodeElement && child.Tag == "Text" {
+						frame.Text = collectTextContent(child)
+					}
+				}
 			}
 			if node.Type == NodeFragment {
 				frame.Tag = "_fragment"

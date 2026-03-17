@@ -18,14 +18,16 @@ var styles = gox.Styles{
         Color: "#666",
     },
     "input": gox.Style{
-        Padding: 12,
+        Height: 44,
         BorderRadius: 8,
         BackgroundColor: "#FFF",
     },
     "button": gox.Style{
-        Padding: 14,
+        Height: 48,
         BorderRadius: 10,
         BackgroundColor: "#4A90D9",
+        AlignItems: "center",
+        JustifyContent: "center",
     },
     "buttonText": gox.Style{
         FontSize: 16,
@@ -36,6 +38,7 @@ var styles = gox.Styles{
         FlexDirection: "row",
         AlignItems: "center",
         Gap: 12,
+        Height: 40,
     },
     "image": gox.Style{
         Width: 80,
@@ -45,26 +48,27 @@ var styles = gox.Styles{
 }
 
 view {
-    <gox.ScrollView style={styles["container"]}>
-        <gox.Text style={styles["title"]}>GOX Component Demo</gox.Text>
-        <gox.Text style={styles["subtitle"]}>All views built with Go</gox.Text>
+    <gox.SafeArea>
+        <gox.ScrollView style={styles["container"]}>
+            <gox.Text style={styles["title"]}>GOX + Yoga Layout</gox.Text>
+            <gox.Text style={styles["subtitle"]}>Flexbox-powered native views</gox.Text>
 
-        <gox.TextInput placeholder="Enter your name..." style={styles["input"]} />
+            <gox.TextInput placeholder="Enter your name..." style={styles["input"]} />
 
-        <gox.Button style={styles["button"]}>
-            <gox.Text style={styles["buttonText"]}>Submit</gox.Text>
-        </gox.Button>
+            <gox.Button style={styles["button"]}>
+                <gox.Text style={styles["buttonText"]}>Submit</gox.Text>
+            </gox.Button>
 
-        <gox.View style={styles["row"]}>
-            <gox.Text style={styles["subtitle"]}>Left</gox.Text>
-            <gox.Switch />
-            <gox.Text style={styles["subtitle"]}>Right</gox.Text>
-        </gox.View>
+            <gox.View style={styles["row"]}>
+                <gox.Text style={styles["subtitle"]}>Dark mode</gox.Text>
+                <gox.Switch />
+            </gox.View>
 
-        <gox.Image
-            src="https://picsum.photos/200"
-            contentMode="cover"
-            style={styles["image"]}
-        />
-    </gox.ScrollView>
+            <gox.Image
+                src="https://picsum.photos/200"
+                contentMode="cover"
+                style={styles["image"]}
+            />
+        </gox.ScrollView>
+    </gox.SafeArea>
 }

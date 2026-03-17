@@ -7,9 +7,7 @@ import (
 )
 
 // GenerateBootstrap creates the main_gox_bootstrap.go file that
-// exports GoxGetTree for the iOS bridge to call.
-//
-// This file is auto-generated and should not be edited.
+// exports GoxGetLayout for the iOS bridge to call.
 func GenerateBootstrap(projectDir string) error {
 	path := filepath.Join(projectDir, "main_gox_bootstrap.go")
 	return os.WriteFile(path, []byte(bootstrapCode), 0644)
@@ -24,18 +22,28 @@ package main
 import "C"
 import (
 	"encoding/json"
+	"gox"
 	"unsafe"
 )
 
-//export GoxGetTree
-func GoxGetTree() *C.char {
+//export GoxGetLayout
+func GoxGetLayout(width, height, safeTop, safeRight, safeBottom, safeLeft C.double) *C.char {
 	tree := render()
 	if tree == nil {
-		return C.CString("{}")
+		return C.CString("[]")
 	}
-	data, err := json.Marshal(tree)
+	screen := gox.ScreenInfo{
+		Width:      float64(width),
+		Height:     float64(height),
+		SafeTop:    float64(safeTop),
+		SafeRight:  float64(safeRight),
+		SafeBottom: float64(safeBottom),
+		SafeLeft:   float64(safeLeft),
+	}
+	frames := gox.ComputeLayout(tree, screen)
+	data, err := json.Marshal(frames)
 	if err != nil {
-		return C.CString("{}")
+		return C.CString("[]")
 	}
 	return C.CString(string(data))
 }
@@ -52,7 +60,7 @@ func main() {}
 func GenerateGoMod(projectDir, moduleName, goxModulePath string) error {
 	modPath := filepath.Join(projectDir, "go.mod")
 	if _, err := os.Stat(modPath); err == nil {
-		return nil // already exists
+		return nil
 	}
 
 	content := fmt.Sprintf(`module %s
