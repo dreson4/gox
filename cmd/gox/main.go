@@ -99,20 +99,38 @@ func cmdInit() error {
 		return err
 	}
 
-	// Compute relative path from new project to gox root
-	relPath, err := filepath.Rel(absProject, goxRoot)
-	if err != nil {
-		relPath = goxRoot // fallback to absolute
+	// Determine if gox is from module cache or local source
+	isModuleCache := strings.Contains(goxRoot, filepath.Join("pkg", "mod"))
+
+	var goMod string
+	if isModuleCache {
+		// Installed via go install — extract version from cache path (e.g. gox@v0.0.2)
+		version := "v0.0.0"
+		base := filepath.Base(goxRoot)
+		if idx := strings.Index(base, "@"); idx != -1 {
+			version = base[idx+1:]
+		}
+		goMod = fmt.Sprintf("module %s\n\ngo 1.25.0\n\nrequire github.com/dreson4/gox %s\n", name, version)
+	} else {
+		// Local dev — use replace directive
+		relPath, err := filepath.Rel(absProject, goxRoot)
+		if err != nil {
+			relPath = goxRoot
+		}
+		goMod = fmt.Sprintf("module %s\n\ngo 1.25.0\n\nrequire gox v0.0.0\n\nreplace gox => %s\n", name, relPath)
 	}
 
-	// Write go.mod
-	goMod := fmt.Sprintf("module %s\n\ngo 1.25.0\n\nrequire gox v0.0.0\n\nreplace gox => %s\n", name, relPath)
 	if err := os.WriteFile(filepath.Join(absProject, "go.mod"), []byte(goMod), 0644); err != nil {
 		return err
 	}
 
 	// Write app.gox
-	if err := os.WriteFile(filepath.Join(absProject, "app.gox"), []byte(starterAppGox), 0644); err != nil {
+	appGox := starterAppGox
+	if isModuleCache {
+		// Use full module path for imports when not using replace directive
+		appGox = strings.Replace(appGox, `"gox"`, `"github.com/dreson4/gox"`, 1)
+	}
+	if err := os.WriteFile(filepath.Join(absProject, "app.gox"), []byte(appGox), 0644); err != nil {
 		return err
 	}
 
@@ -123,7 +141,7 @@ func cmdInit() error {
 }
 
 // resolveGoxRootForInit finds the gox module root for the init command.
-// Checks: --gox-path flag, GOX_ROOT env, cwd ancestry, executable ancestry.
+// Checks: --gox-path flag, GOX_ROOT env, cwd ancestry, executable ancestry, module cache.
 func resolveGoxRootForInit() (string, error) {
 	// Check --gox-path flag
 	for i, arg := range os.Args {
@@ -155,7 +173,47 @@ func resolveGoxRootForInit() (string, error) {
 		}
 	}
 
+	// Check Go module cache (for go install'd binaries)
+	if root := findGoxInModuleCache(); root != "" {
+		return root, nil
+	}
+
 	return "", fmt.Errorf("cannot find gox module root\n\nTry one of:\n  gox init <name> --gox-path /path/to/gox\n  export GOX_ROOT=/path/to/gox\n  run from inside the gox source directory")
+}
+
+// findGoxInModuleCache looks for the gox module in GOPATH/pkg/mod.
+func findGoxInModuleCache() string {
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		gopath = filepath.Join(home, "go")
+	}
+
+	modDir := filepath.Join(gopath, "pkg", "mod", "github.com", "dreson4")
+	entries, err := os.ReadDir(modDir)
+	if err != nil {
+		return ""
+	}
+
+	// Find the latest gox version in the cache
+	var latest string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "gox@") {
+			latest = e.Name() // entries are sorted, last one is latest
+		}
+	}
+	if latest == "" {
+		return ""
+	}
+
+	root := filepath.Join(modDir, latest)
+	if isGoxModuleRoot(root) {
+		return root
+	}
+	return ""
 }
 
 // findGoxModuleRoot walks up from dir looking for a go.mod with "module gox".
@@ -529,8 +587,8 @@ func findGoxRoot(projectDir string) string {
 	// Check if this IS the gox module
 	modFile := filepath.Join(projectDir, "go.mod")
 	if data, err := os.ReadFile(modFile); err == nil {
+		// Check for replace directive (local dev)
 		if strings.Contains(string(data), "replace gox =>") {
-			// User project with replace directive — extract the path
 			for _, line := range strings.Split(string(data), "\n") {
 				if strings.Contains(line, "replace gox =>") {
 					parts := strings.Split(line, "=>")
@@ -548,6 +606,12 @@ func findGoxRoot(projectDir string) string {
 			return projectDir
 		}
 	}
+
+	// Check module cache (for go install'd projects)
+	if root := findGoxInModuleCache(); root != "" {
+		return root
+	}
+
 	return projectDir
 }
 

@@ -4,7 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// GoxImportPath returns the correct import path for the gox package
+// based on whether the project uses a replace directive or the real module path.
+func GoxImportPath(projectDir string) string {
+	data, err := os.ReadFile(filepath.Join(projectDir, "go.mod"))
+	if err != nil {
+		return "gox"
+	}
+	if strings.Contains(string(data), "replace gox =>") {
+		return "gox"
+	}
+	if strings.Contains(string(data), "github.com/dreson4/gox") {
+		return "github.com/dreson4/gox"
+	}
+	return "gox"
+}
 
 // GenerateBootstrap creates the main_gox_bootstrap.go file that
 // exports GoxGetLayout and GoxHandleEvent for the iOS bridge.
@@ -12,6 +29,11 @@ func GenerateBootstrap(projectDir string, perfEnabled bool) error {
 	code := bootstrapCode
 	if perfEnabled {
 		code = bootstrapCodePerf
+	}
+	// Replace gox import path if needed
+	importPath := GoxImportPath(projectDir)
+	if importPath != "gox" {
+		code = strings.Replace(code, `"gox"`, `"`+importPath+`"`, 1)
 	}
 	path := filepath.Join(projectDir, "main_gox_bootstrap.go")
 	return os.WriteFile(path, []byte(code), 0644)
