@@ -16,5 +16,22 @@ func init() {
 			}
 			yn.SetHeight(44)
 		},
+		ExtractFrame: func(fd *FrameData, node NodeInfo, children []NodeInfo) {
+			// Pass through TextInput-specific props to the layout frame
+			passthrough := []string{
+				"value", "placeholder", "placeholderColor",
+				"keyboardType", "returnKeyType", "autoCapitalize",
+				"autoCorrect", "autoFocus", "editable", "maxLength",
+				"secure", "textAlign", "color", "fontSize",
+			}
+			for _, key := range passthrough {
+				if v, ok := node.Props[key]; ok {
+					if fd.Props == nil {
+						fd.Props = map[string]any{}
+					}
+					fd.Props[key] = v
+				}
+			}
+		},
 	})
 }

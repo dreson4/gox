@@ -286,14 +286,30 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 				}
 			}
 
-			// Register event callbacks (onPress, onChange, etc.)
+			// Register event callbacks
 			if node.Props != nil {
+				if frame.Props == nil {
+					frame.Props = P{}
+				}
 				if onPress, ok := node.Props["onPress"].(func()); ok {
 					RegisterEvent(i, onPress)
-					if frame.Props == nil {
-						frame.Props = P{}
-					}
 					frame.Props["_hasOnPress"] = true
+				}
+				if onChange, ok := node.Props["onChange"].(func(string)); ok {
+					RegisterTextEvent(i, onChange)
+					frame.Props["_hasOnChange"] = true
+				}
+				if onSubmit, ok := node.Props["onSubmit"].(func()); ok {
+					RegisterSubmitEvent(i, onSubmit)
+					frame.Props["_hasOnSubmit"] = true
+				}
+				if onFocus, ok := node.Props["onFocus"].(func()); ok {
+					RegisterFocusEvent(i, onFocus)
+					frame.Props["_hasOnFocus"] = true
+				}
+				if onBlur, ok := node.Props["onBlur"].(func()); ok {
+					RegisterBlurEvent(i, onBlur)
+					frame.Props["_hasOnBlur"] = true
 				}
 			}
 		}

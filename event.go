@@ -6,9 +6,13 @@ import "sync"
 // Populated during layout computation, called when native events fire.
 
 var (
-	eventMu        sync.Mutex
-	eventCallbacks map[int]func()
-	rerenderFn     func()
+	eventMu            sync.Mutex
+	eventCallbacks     map[int]func()
+	textEventCallbacks map[int]func(string)
+	submitCallbacks    map[int]func()
+	focusCallbacks     map[int]func()
+	blurCallbacks      map[int]func()
+	rerenderFn         func()
 )
 
 // RegisterEvent stores a callback for a view ID.
@@ -22,12 +26,56 @@ func RegisterEvent(id int, callback func()) {
 	eventCallbacks[id] = callback
 }
 
+// RegisterTextEvent stores a text callback (onChange) for a view ID.
+func RegisterTextEvent(id int, callback func(string)) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if textEventCallbacks == nil {
+		textEventCallbacks = make(map[int]func(string))
+	}
+	textEventCallbacks[id] = callback
+}
+
+// RegisterSubmitEvent stores a submit callback for a view ID.
+func RegisterSubmitEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if submitCallbacks == nil {
+		submitCallbacks = make(map[int]func())
+	}
+	submitCallbacks[id] = callback
+}
+
+// RegisterFocusEvent stores a focus callback for a view ID.
+func RegisterFocusEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if focusCallbacks == nil {
+		focusCallbacks = make(map[int]func())
+	}
+	focusCallbacks[id] = callback
+}
+
+// RegisterBlurEvent stores a blur callback for a view ID.
+func RegisterBlurEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if blurCallbacks == nil {
+		blurCallbacks = make(map[int]func())
+	}
+	blurCallbacks[id] = callback
+}
+
 // ClearEvents removes all registered callbacks.
 // Called before each render to avoid stale references.
 func ClearEvents() {
 	eventMu.Lock()
 	defer eventMu.Unlock()
 	eventCallbacks = make(map[int]func())
+	textEventCallbacks = make(map[int]func(string))
+	submitCallbacks = make(map[int]func())
+	focusCallbacks = make(map[int]func())
+	blurCallbacks = make(map[int]func())
 }
 
 // HandleEvent fires the callback for a view ID.
@@ -35,6 +83,54 @@ func ClearEvents() {
 func HandleEvent(id int) {
 	eventMu.Lock()
 	cb, ok := eventCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleTextEvent fires the text callback for a view ID with the new text value.
+// Called from the native bridge when a text input's content changes.
+func HandleTextEvent(id int, text string) {
+	eventMu.Lock()
+	cb, ok := textEventCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb(text)
+	}
+}
+
+// HandleSubmitEvent fires the submit callback for a view ID.
+// Called from the native bridge when return key is pressed in a text input.
+func HandleSubmitEvent(id int) {
+	eventMu.Lock()
+	cb, ok := submitCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleFocusEvent fires the focus callback for a view ID.
+// Called from the native bridge when a text input gains focus.
+func HandleFocusEvent(id int) {
+	eventMu.Lock()
+	cb, ok := focusCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleBlurEvent fires the blur callback for a view ID.
+// Called from the native bridge when a text input loses focus.
+func HandleBlurEvent(id int) {
+	eventMu.Lock()
+	cb, ok := blurCallbacks[id]
 	eventMu.Unlock()
 
 	if ok && cb != nil {

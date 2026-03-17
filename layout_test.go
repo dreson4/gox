@@ -502,6 +502,64 @@ func TestLayoutNestedRowInColumn(t *testing.T) {
 	}
 }
 
+func TestLayoutTextInputEventProps(t *testing.T) {
+	var textVal string
+	submitCalled := false
+
+	tree := E("TextInput", P{
+		"value":       "hello",
+		"placeholder": "Type here",
+		"onChange":     func(text string) { textVal = text },
+		"onSubmit":    func() { submitCalled = true },
+		"onFocus":     func() {},
+		"onBlur":      func() {},
+		"style":       Style{Height: 44},
+	})
+
+	frames := ComputeLayout(tree, testScreen)
+
+	if len(frames) < 1 {
+		t.Fatalf("expected at least 1 frame, got %d", len(frames))
+	}
+
+	frame := frames[0]
+	if frame.Tag != "TextInput" {
+		t.Errorf("expected tag TextInput, got %s", frame.Tag)
+	}
+
+	// Check event flags are set
+	if frame.Props["_hasOnChange"] != true {
+		t.Error("expected _hasOnChange=true")
+	}
+	if frame.Props["_hasOnSubmit"] != true {
+		t.Error("expected _hasOnSubmit=true")
+	}
+	if frame.Props["_hasOnFocus"] != true {
+		t.Error("expected _hasOnFocus=true")
+	}
+	if frame.Props["_hasOnBlur"] != true {
+		t.Error("expected _hasOnBlur=true")
+	}
+
+	// Check that props from ExtractFrame are passed through
+	if frame.Props["value"] != "hello" {
+		t.Errorf("expected value=hello, got %v", frame.Props["value"])
+	}
+	if frame.Props["placeholder"] != "Type here" {
+		t.Errorf("expected placeholder='Type here', got %v", frame.Props["placeholder"])
+	}
+
+	// Verify the event callbacks were registered
+	HandleTextEvent(0, "world")
+	if textVal != "world" {
+		t.Errorf("expected textVal='world', got %q", textVal)
+	}
+	HandleSubmitEvent(0)
+	if !submitCalled {
+		t.Error("expected submit callback to fire")
+	}
+}
+
 func TestLayoutMargin(t *testing.T) {
 	tree := E("View", P{"style": Style{Width: 200, Height: 200}},
 		E("View", P{"style": Style{

@@ -151,6 +151,26 @@ func GoxHandleEvent(viewID C.int) {
 	gox.HandleEvent(int(viewID))
 }
 
+//export GoxHandleTextEvent
+func GoxHandleTextEvent(viewID C.int, text *C.char) {
+	gox.HandleTextEvent(int(viewID), C.GoString(text))
+}
+
+//export GoxHandleSubmit
+func GoxHandleSubmit(viewID C.int) {
+	gox.HandleSubmitEvent(int(viewID))
+}
+
+//export GoxHandleFocus
+func GoxHandleFocus(viewID C.int) {
+	gox.HandleFocusEvent(int(viewID))
+}
+
+//export GoxHandleBlur
+func GoxHandleBlur(viewID C.int) {
+	gox.HandleBlurEvent(int(viewID))
+}
+
 //export GoxRerender
 func GoxRerender() *C.char {
 	data := renderAndLayout(
@@ -340,6 +360,26 @@ func GoxGetLayout(w, h, safeT, safeR, safeB, safeL C.double) *C.char {
 //export GoxHandleEvent
 func GoxHandleEvent(viewID C.int) {
 	gox.HandleEvent(int(viewID))
+}
+
+//export GoxHandleTextEvent
+func GoxHandleTextEvent(viewID C.int, text *C.char) {
+	gox.HandleTextEvent(int(viewID), C.GoString(text))
+}
+
+//export GoxHandleSubmit
+func GoxHandleSubmit(viewID C.int) {
+	gox.HandleSubmitEvent(int(viewID))
+}
+
+//export GoxHandleFocus
+func GoxHandleFocus(viewID C.int) {
+	gox.HandleFocusEvent(int(viewID))
+}
+
+//export GoxHandleBlur
+func GoxHandleBlur(viewID C.int) {
+	gox.HandleBlurEvent(int(viewID))
 }
 
 //export GoxRerender

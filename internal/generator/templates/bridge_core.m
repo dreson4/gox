@@ -19,6 +19,10 @@
 // Exported from the Go static library
 extern const char* GoxGetLayout(double w, double h, double safeT, double safeR, double safeB, double safeL);
 extern void GoxHandleEvent(int viewID);
+extern void GoxHandleTextEvent(int viewID, const char* text);
+extern void GoxHandleSubmit(int viewID);
+extern void GoxHandleFocus(int viewID);
+extern void GoxHandleBlur(int viewID);
 extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
 extern void GoxHandleBack(void);
@@ -580,6 +584,102 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
 
 // --- Event handling ---
 
+// goxTriggerRerender — shared rerender logic called after any event.
+// Calls GoxRerender(), parses the response, and applies the diff update
+// or navigation action. Components call this after firing Go callbacks.
+void goxTriggerRerender(void) {
+    if (!goxViewController || !goxActiveContext) return;
+
+    const char *json = GoxRerender();
+    if (!json) return;
+
+    NSData *data = [NSData dataWithBytes:json length:strlen(json)];
+    GoxFreeString(json);
+
+    NSDictionary *perfData = nil;
+    NSString *navAction = nil;
+    NSDictionary *navOpts = nil;
+    NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
+    if (!frames) return;
+
+    // Extract Go timing if perf is enabled
+    if (perfData) {
+        double renderNs = [perfData[@"renderNs"] doubleValue];
+        double layoutNs = [perfData[@"layoutNs"] doubleValue];
+        double marshalNs = [perfData[@"marshalNs"] doubleValue];
+        goxLastGoMs = (renderNs + layoutNs + marshalNs) / 1e6;
+        goxLastTotalFrames = [perfData[@"frameCount"] intValue];
+    }
+
+    // Handle navigation actions
+    if ([navAction isEqualToString:@"push"]) {
+        NSLog(@"GOX_INTERNAL: Pushing new screen");
+
+        UIViewController *newVC = [[UIViewController alloc] init];
+        newVC.view.backgroundColor = [UIColor whiteColor];
+        applyNavOptions(newVC, navOpts, goxNavController);
+
+        GoxRenderContext *newCtx = [[GoxRenderContext alloc] init];
+        [goxContextStack addObject:newCtx];
+
+        CFTimeInterval bridgeStart = CACurrentMediaTime();
+        buildUI(newVC, newCtx, frames);
+        goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+
+        goxViewController = newVC;
+        goxActiveContext = newCtx;
+
+        BOOL headerShown = YES;
+        if (navOpts && navOpts[@"headerShown"]) {
+            headerShown = [navOpts[@"headerShown"] boolValue];
+        }
+        [goxNavController setNavigationBarHidden:!headerShown animated:NO];
+        [goxNavController pushViewController:newVC animated:YES];
+
+        NSLog(@"GOX_INTERNAL: Pushed screen with %lu frames", (unsigned long)[frames count]);
+    } else if ([navAction isEqualToString:@"pop"]) {
+        NSLog(@"GOX_INTERNAL: Popping screen");
+
+        if ([goxContextStack count] > 1) {
+            [goxContextStack removeLastObject];
+
+            if ([goxContextStack count] <= 1) {
+                [goxNavController setNavigationBarHidden:YES animated:YES];
+            }
+
+            [goxNavController popViewControllerAnimated:YES];
+
+            goxActiveContext = [goxContextStack lastObject];
+            goxViewController = goxNavController.topViewController;
+
+            const char *reJson = GoxRerender();
+            if (reJson) {
+                NSData *reData = [NSData dataWithBytes:reJson length:strlen(reJson)];
+                GoxFreeString(reJson);
+
+                NSDictionary *rePerfData = nil;
+                NSString *reAction = nil;
+                NSDictionary *reNav = nil;
+                NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reNav);
+                if (reFrames) {
+                    CFTimeInterval bridgeStart = CACurrentMediaTime();
+                    updateUI(goxViewController, goxActiveContext, reFrames);
+                    goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+                }
+            }
+
+            NSLog(@"GOX_INTERNAL: Popped to previous screen");
+        }
+    } else {
+        // Normal re-render (no navigation)
+        CFTimeInterval bridgeStart = CACurrentMediaTime();
+        updateUI(goxViewController, goxActiveContext, frames);
+        goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
+    }
+
+    NSLog(@"GOX_INTERNAL: Updated %lu frames", (unsigned long)[frames count]);
+}
+
 @interface GoxEventHandler : NSObject
 @property (nonatomic, assign) int viewID;
 - (void)handleTap;
@@ -589,111 +689,7 @@ static GoxPerfOverlay *goxPerfOverlay = nil;
 - (void)handleTap {
     NSLog(@"GOX_INTERNAL: Button tapped, viewID=%d", self.viewID);
     GoxHandleEvent(self.viewID);
-
-    // Re-render: get new layout from Go and diff-update
-    if (goxViewController && goxActiveContext) {
-        const char *json = GoxRerender();
-        if (json) {
-            NSData *data = [NSData dataWithBytes:json length:strlen(json)];
-            GoxFreeString(json);
-
-            NSDictionary *perfData = nil;
-            NSString *navAction = nil;
-            NSDictionary *navOpts = nil;
-            NSArray *frames = parseGoxResponse(data, &perfData, &navAction, &navOpts);
-            if (frames) {
-                // Extract Go timing if perf is enabled
-                if (perfData) {
-                    double renderNs = [perfData[@"renderNs"] doubleValue];
-                    double layoutNs = [perfData[@"layoutNs"] doubleValue];
-                    double marshalNs = [perfData[@"marshalNs"] doubleValue];
-                    goxLastGoMs = (renderNs + layoutNs + marshalNs) / 1e6;
-                    goxLastTotalFrames = [perfData[@"frameCount"] intValue];
-                }
-
-                // Handle navigation actions
-                if ([navAction isEqualToString:@"push"]) {
-                    NSLog(@"GOX_INTERNAL: Pushing new screen");
-
-                    // Create new VC and context for the pushed screen
-                    UIViewController *newVC = [[UIViewController alloc] init];
-                    newVC.view.backgroundColor = [UIColor whiteColor];
-
-                    // Apply navigation options (title, style, buttons, etc.)
-                    applyNavOptions(newVC, navOpts, goxNavController);
-
-                    GoxRenderContext *newCtx = [[GoxRenderContext alloc] init];
-
-                    // Push context onto stack
-                    [goxContextStack addObject:newCtx];
-
-                    // Build UI on the new VC
-                    CFTimeInterval bridgeStart = CACurrentMediaTime();
-                    buildUI(newVC, newCtx, frames);
-                    goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
-
-                    // Switch active state
-                    goxViewController = newVC;
-                    goxActiveContext = newCtx;
-
-                    // Show/hide nav bar based on headerShown option
-                    BOOL headerShown = YES;
-                    if (navOpts && navOpts[@"headerShown"]) {
-                        headerShown = [navOpts[@"headerShown"] boolValue];
-                    }
-                    [goxNavController setNavigationBarHidden:!headerShown animated:NO];
-                    [goxNavController pushViewController:newVC animated:YES];
-
-                    NSLog(@"GOX_INTERNAL: Pushed screen with %lu frames", (unsigned long)[frames count]);
-                } else if ([navAction isEqualToString:@"pop"]) {
-                    NSLog(@"GOX_INTERNAL: Popping screen");
-
-                    // Pop the current context
-                    if ([goxContextStack count] > 1) {
-                        [goxContextStack removeLastObject];
-
-                        // Hide nav bar if returning to root
-                        if ([goxContextStack count] <= 1) {
-                            [goxNavController setNavigationBarHidden:YES animated:YES];
-                        }
-
-                        // Pop with native iOS animation
-                        [goxNavController popViewControllerAnimated:YES];
-
-                        // Restore previous context
-                        goxActiveContext = [goxContextStack lastObject];
-                        goxViewController = goxNavController.topViewController;
-
-                        // Re-render to re-register event callbacks on restored screen
-                        const char *reJson = GoxRerender();
-                        if (reJson) {
-                            NSData *reData = [NSData dataWithBytes:reJson length:strlen(reJson)];
-                            GoxFreeString(reJson);
-
-                            NSDictionary *rePerfData = nil;
-                            NSString *reAction = nil;
-                            NSDictionary *reNav = nil;
-                            NSArray *reFrames = parseGoxResponse(reData, &rePerfData, &reAction, &reNav);
-                            if (reFrames) {
-                                CFTimeInterval bridgeStart = CACurrentMediaTime();
-                                updateUI(goxViewController, goxActiveContext, reFrames);
-                                goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
-                            }
-                        }
-
-                        NSLog(@"GOX_INTERNAL: Popped to previous screen");
-                    }
-                } else {
-                    // Normal re-render (no navigation)
-                    CFTimeInterval bridgeStart = CACurrentMediaTime();
-                    updateUI(goxViewController, goxActiveContext, frames);
-                    goxLastBridgeMs = (CACurrentMediaTime() - bridgeStart) * 1000.0;
-                }
-
-                NSLog(@"GOX_INTERNAL: Updated %lu frames", (unsigned long)[frames count]);
-            }
-        }
-    }
+    goxTriggerRerender();
 }
 @end
 
@@ -738,8 +734,12 @@ static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames
             setTextContent(view, tag, text, props);
         }
 
-        NSNumber *hasOnPress = props[@"_hasOnPress"];
-        if (hasOnPress && [hasOnPress boolValue]) {
+        BOOL hasEvent = [props[@"_hasOnPress"] boolValue]
+            || [props[@"_hasOnChange"] boolValue]
+            || [props[@"_hasOnSubmit"] boolValue]
+            || [props[@"_hasOnFocus"] boolValue]
+            || [props[@"_hasOnBlur"] boolValue];
+        if (hasEvent) {
             wireEvent(view, tag, viewID, ctx);
         }
 
@@ -938,8 +938,12 @@ static void updateUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *newFr
 
         // Re-wire events (must always run — Go clears callbacks each render)
         if (existing) {
-            NSNumber *hasOnPress = props[@"_hasOnPress"];
-            if (hasOnPress && [hasOnPress boolValue]) {
+            BOOL hasEvent = [props[@"_hasOnPress"] boolValue]
+                || [props[@"_hasOnChange"] boolValue]
+                || [props[@"_hasOnSubmit"] boolValue]
+                || [props[@"_hasOnFocus"] boolValue]
+                || [props[@"_hasOnBlur"] boolValue];
+            if (hasEvent) {
                 wireEvent(existing, tag, [viewID intValue], ctx);
             }
         }
