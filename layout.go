@@ -311,6 +311,14 @@ func (lc *layoutComputer) extractFrames(yn *yoga.Node, offsetX, offsetY float64)
 					RegisterBlurEvent(i, onBlur)
 					frame.Props["_hasOnBlur"] = true
 				}
+				if onLoad, ok := node.Props["onLoad"].(func()); ok {
+					RegisterLoadEvent(i, onLoad)
+					frame.Props["_hasOnLoad"] = true
+				}
+				if onError, ok := node.Props["onError"].(func()); ok {
+					RegisterErrorEvent(i, onError)
+					frame.Props["_hasOnError"] = true
+				}
 			}
 		}
 

@@ -171,6 +171,16 @@ func GoxHandleBlur(viewID C.int) {
 	gox.HandleBlurEvent(int(viewID))
 }
 
+//export GoxHandleLoad
+func GoxHandleLoad(viewID C.int) {
+	gox.HandleLoadEvent(int(viewID))
+}
+
+//export GoxHandleError
+func GoxHandleError(viewID C.int) {
+	gox.HandleErrorEvent(int(viewID))
+}
+
 //export GoxRerender
 func GoxRerender() *C.char {
 	data := renderAndLayout(
@@ -380,6 +390,16 @@ func GoxHandleFocus(viewID C.int) {
 //export GoxHandleBlur
 func GoxHandleBlur(viewID C.int) {
 	gox.HandleBlurEvent(int(viewID))
+}
+
+//export GoxHandleLoad
+func GoxHandleLoad(viewID C.int) {
+	gox.HandleLoadEvent(int(viewID))
+}
+
+//export GoxHandleError
+func GoxHandleError(viewID C.int) {
+	gox.HandleErrorEvent(int(viewID))
 }
 
 //export GoxRerender

@@ -23,6 +23,8 @@ extern void GoxHandleTextEvent(int viewID, const char* text);
 extern void GoxHandleSubmit(int viewID);
 extern void GoxHandleFocus(int viewID);
 extern void GoxHandleBlur(int viewID);
+extern void GoxHandleLoad(int viewID);
+extern void GoxHandleError(int viewID);
 extern const char* GoxRerender(void);
 extern void GoxFreeString(const char* s);
 extern void GoxHandleBack(void);
@@ -142,23 +144,60 @@ UIColor* goxParseColor(NSString *hex) {
     return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a/255.0];
 }
 
+// --- Image cache ---
+
+static NSCache<NSString*, UIImage*> *goxImageCache(void) {
+    static NSCache<NSString*, UIImage*> *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 100;
+        cache.totalCostLimit = 50 * 1024 * 1024; // 50MB
+    });
+    return cache;
+}
+
 // --- Image loading helper ---
 
-void goxLoadImageAsync(UIImageView *imageView, NSString *src) {
-    if (!src || [src length] == 0) return;
+void goxLoadImageAsync(UIImageView *imageView, NSString *src, void (^completion)(BOOL success)) {
+    if (!src || [src length] == 0) {
+        if (completion) completion(NO);
+        return;
+    }
+
     if ([src hasPrefix:@"http://"] || [src hasPrefix:@"https://"]) {
+        // Check cache first
+        NSCache *cache = goxImageCache();
+        UIImage *cached = [cache objectForKey:src];
+        if (cached) {
+            imageView.image = cached;
+            if (completion) completion(YES);
+            return;
+        }
+
+        // Cache miss — fetch async
+        NSString *srcCopy = [src copy];
+        __unsafe_unretained UIImageView *weakView = imageView;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            NSURL *url = [NSURL URLWithString:src];
+            NSURL *url = [NSURL URLWithString:srcCopy];
             NSData *data = [NSData dataWithContentsOfURL:url];
-            if (data) {
-                UIImage *image = [UIImage imageWithData:data];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    imageView.image = image;
-                });
+            UIImage *image = data ? [UIImage imageWithData:data] : nil;
+
+            if (image) {
+                [cache setObject:image forKey:srcCopy cost:data.length];
             }
+
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (weakView && image) {
+                    weakView.image = image;
+                }
+                if (completion) completion(image != nil);
+            });
         });
     } else {
-        imageView.image = [UIImage imageNamed:src];
+        UIImage *image = [UIImage imageNamed:src];
+        imageView.image = image;
+        if (completion) completion(image != nil);
     }
 }
 
@@ -738,7 +777,9 @@ static void buildUI(UIViewController *vc, GoxRenderContext *ctx, NSArray *frames
             || [props[@"_hasOnChange"] boolValue]
             || [props[@"_hasOnSubmit"] boolValue]
             || [props[@"_hasOnFocus"] boolValue]
-            || [props[@"_hasOnBlur"] boolValue];
+            || [props[@"_hasOnBlur"] boolValue]
+            || [props[@"_hasOnLoad"] boolValue]
+            || [props[@"_hasOnError"] boolValue];
         if (hasEvent) {
             wireEvent(view, tag, viewID, ctx);
         }

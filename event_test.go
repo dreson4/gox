@@ -70,6 +70,8 @@ func TestClearEventsAllTypes(t *testing.T) {
 	RegisterSubmitEvent(3, func() {})
 	RegisterFocusEvent(4, func() {})
 	RegisterBlurEvent(5, func() {})
+	RegisterLoadEvent(6, func() {})
+	RegisterErrorEvent(7, func() {})
 
 	ClearEvents()
 
@@ -90,7 +92,33 @@ func TestClearEventsAllTypes(t *testing.T) {
 	if len(blurCallbacks) != 0 {
 		t.Error("blurCallbacks should be empty after clear")
 	}
+	if len(loadCallbacks) != 0 {
+		t.Error("loadCallbacks should be empty after clear")
+	}
+	if len(errorCallbacks) != 0 {
+		t.Error("errorCallbacks should be empty after clear")
+	}
 	eventMu.Unlock()
+}
+
+func TestRegisterAndHandleLoadEvent(t *testing.T) {
+	ClearEvents()
+	called := false
+	RegisterLoadEvent(1, func() { called = true })
+	HandleLoadEvent(1)
+	if !called {
+		t.Error("expected load callback to be called")
+	}
+}
+
+func TestRegisterAndHandleErrorEvent(t *testing.T) {
+	ClearEvents()
+	called := false
+	RegisterErrorEvent(1, func() { called = true })
+	HandleErrorEvent(1)
+	if !called {
+		t.Error("expected error callback to be called")
+	}
 }
 
 func TestMultipleEventsSameViewID(t *testing.T) {

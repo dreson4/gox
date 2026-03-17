@@ -12,6 +12,8 @@ var (
 	submitCallbacks    map[int]func()
 	focusCallbacks     map[int]func()
 	blurCallbacks      map[int]func()
+	loadCallbacks      map[int]func()
+	errorCallbacks     map[int]func()
 	rerenderFn         func()
 )
 
@@ -66,6 +68,26 @@ func RegisterBlurEvent(id int, callback func()) {
 	blurCallbacks[id] = callback
 }
 
+// RegisterLoadEvent stores an onLoad callback for a view ID.
+func RegisterLoadEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if loadCallbacks == nil {
+		loadCallbacks = make(map[int]func())
+	}
+	loadCallbacks[id] = callback
+}
+
+// RegisterErrorEvent stores an onError callback for a view ID.
+func RegisterErrorEvent(id int, callback func()) {
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if errorCallbacks == nil {
+		errorCallbacks = make(map[int]func())
+	}
+	errorCallbacks[id] = callback
+}
+
 // ClearEvents removes all registered callbacks.
 // Called before each render to avoid stale references.
 func ClearEvents() {
@@ -76,6 +98,8 @@ func ClearEvents() {
 	submitCallbacks = make(map[int]func())
 	focusCallbacks = make(map[int]func())
 	blurCallbacks = make(map[int]func())
+	loadCallbacks = make(map[int]func())
+	errorCallbacks = make(map[int]func())
 }
 
 // HandleEvent fires the callback for a view ID.
@@ -131,6 +155,28 @@ func HandleFocusEvent(id int) {
 func HandleBlurEvent(id int) {
 	eventMu.Lock()
 	cb, ok := blurCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleLoadEvent fires the onLoad callback for a view ID.
+func HandleLoadEvent(id int) {
+	eventMu.Lock()
+	cb, ok := loadCallbacks[id]
+	eventMu.Unlock()
+
+	if ok && cb != nil {
+		cb()
+	}
+}
+
+// HandleErrorEvent fires the onError callback for a view ID.
+func HandleErrorEvent(id int) {
+	eventMu.Lock()
+	cb, ok := errorCallbacks[id]
 	eventMu.Unlock()
 
 	if ok && cb != nil {
