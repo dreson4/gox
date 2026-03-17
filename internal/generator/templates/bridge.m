@@ -150,7 +150,9 @@ static UIView* createViewForTag(NSString *tag, NSDictionary *props) {
     }
 
     // Default: plain UIView (View, SafeArea, Row, Column, Fragment, etc.)
-    return [[UIView alloc] init];
+    UIView *v = [[UIView alloc] init];
+    v.clipsToBounds = YES;
+    return v;
 }
 
 // --- Visual style application (no layout — Yoga handles that) ---
@@ -331,6 +333,9 @@ static void buildUI(UIViewController *vc, NSArray *frames) {
         UIView *view = createViewForTag(tag, props);
         view.frame = CGRectMake(x, y, w, h);
         applyVisualStyle(view, props);
+
+        int pid = [frame[@"pid"] intValue];
+        NSLog(@"GOX frame: id=%d tag=%@ pid=%d (%.0f,%.0f,%.0f,%.0f)", viewID, tag, pid, x, y, w, h);
 
         // Handle text content
         NSString *text = frame[@"text"];
