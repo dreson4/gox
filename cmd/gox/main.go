@@ -335,13 +335,45 @@ func compileFile(path string) error {
 		return fmt.Errorf("compilation failed with %d error(s)", len(result.Errors))
 	}
 
+	// Rewrite "gox" imports to the correct module path based on go.mod
+	goSource := rewriteGoxImports(result.GoSource, path)
+
 	outPath := outputPath(path)
-	if err := os.WriteFile(outPath, []byte(result.GoSource), 0644); err != nil {
+	if err := os.WriteFile(outPath, []byte(goSource), 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", outPath, err)
 	}
 
 	fmt.Printf("  %s → %s\n", path, outPath)
 	return nil
+}
+
+// rewriteGoxImports replaces "gox" imports with the correct module path
+// (e.g. "github.com/dreson4/gox") based on the project's go.mod.
+func rewriteGoxImports(source, goxFilePath string) string {
+	// Walk up from the .gox file to find go.mod
+	dir := filepath.Dir(goxFilePath)
+	for {
+		modPath := filepath.Join(dir, "go.mod")
+		if data, err := os.ReadFile(modPath); err == nil {
+			modContent := string(data)
+			// If the project uses the full module path, rewrite imports
+			if strings.Contains(modContent, "github.com/dreson4/gox") &&
+				!strings.Contains(modContent, "replace gox =>") {
+				importPath := generator.GoxImportPath(dir)
+				if importPath != "gox" {
+					// Replace standalone "gox" imports but not sub-package paths
+					source = strings.ReplaceAll(source, `"gox"`, `"`+importPath+`"`)
+				}
+			}
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return source
 }
 
 func compileDir(dir string) error {

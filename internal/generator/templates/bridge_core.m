@@ -33,6 +33,9 @@ extern void GoxHandleBack(void);
 extern void GoxAppDidEnterForeground(void);
 extern void GoxAppDidEnterBackground(void);
 
+// Platform APIs (implemented in gox_platform.m)
+extern int goxGetStatusBarStyle(void);
+
 // --- Component registry ---
 
 @class GoxEventHandler;
@@ -1092,6 +1095,25 @@ void goxScheduleRerender(void) {
     });
 }
 
+// --- Status bar aware nav controller ---
+
+@interface GoxNavigationController : UINavigationController
+@end
+
+@implementation GoxNavigationController
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    int style = goxGetStatusBarStyle();
+    switch (style) {
+        case 1: return UIStatusBarStyleLightContent;
+        case 2: return UIStatusBarStyleDarkContent;
+        default: return UIStatusBarStyleDefault;
+    }
+}
+- (UIViewController *)childViewControllerForStatusBarStyle {
+    return nil; // nav controller handles it directly
+}
+@end
+
 // --- App lifecycle ---
 
 @interface GoxAppDelegate : UIResponder <UIApplicationDelegate, UINavigationControllerDelegate>
@@ -1110,7 +1132,7 @@ void goxScheduleRerender(void) {
     rootVC.view.backgroundColor = [UIColor whiteColor];
 
     // Wrap in UINavigationController with hidden nav bar
-    goxNavController = [[UINavigationController alloc] initWithRootViewController:rootVC];
+    goxNavController = [[GoxNavigationController alloc] initWithRootViewController:rootVC];
     goxNavController.navigationBarHidden = YES;
     goxNavController.delegate = self;
 
